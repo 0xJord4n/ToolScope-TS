@@ -1,0 +1,55 @@
+{
+  "name": "@0xjordan/toolscope",
+  "version": "0.1.0",
+  "description": "Semantic tool retrieval for TypeScript agents, powered by Bun",
+  "type": "module",
+  "private": true,
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./adapters/vercel-ai": "./src/adapters/vercel-ai.ts",
+    "./adapters/langgraph": "./src/adapters/langgraph.ts",
+    "./adapters/mcp": "./src/adapters/mcp.ts",
+    "./backends/sqlite": "./src/backends/sqlite.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build ./src/index.ts ./src/adapters/vercel-ai.ts ./src/adapters/langgraph.ts ./src/adapters/mcp.ts ./src/backends/sqlite.ts --outdir ./dist --target bun --format esm --external @langchain/core --external @langchain/langgraph --external ai",
+    "check": "bun run lint && bun run typecheck && bun test && bun run build",
+    "lint": "biome check src tests examples",
+    "format": "biome format --write src tests examples"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.12",
+    "@langchain/core": "^1.2.9",
+    "@langchain/langgraph": "^1.4.14",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/bun": "latest",
+    "ai": "^7.0.93",
+    "typescript": "^5.9.2"
+  },
+  "peerDependencies": {
+    "@langchain/core": ">=0.3.0",
+    "@langchain/langgraph": ">=0.2.0",
+    "ai": ">=5.0.0",
+    "@modelcontextprotocol/sdk": ">=1.20.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    },
+    "@langchain/langgraph": {
+      "optional": true
+    },
+    "ai": {
+      "optional": true
+    },
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "zod": "^4.5.4"
+  }
+}
