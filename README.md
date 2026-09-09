@@ -25,15 +25,35 @@ Models become less reliable and prompts become expensive when every turn include
 
 ## Install
 
-Install the public npm package:
+Install the public package with your preferred package manager:
 
 ```bash
+# npm
+npm install toolscope-ts
+
+# pnpm
+pnpm add toolscope-ts
+
+# Yarn
+yarn add toolscope-ts
+
+# Bun
 bun add toolscope-ts
 ```
 
 Authenticated GitHub installs are also supported:
 
 ```bash
+# npm
+npm install github:0xJord4n/ToolScope-TS
+
+# pnpm
+pnpm add github:0xJord4n/ToolScope-TS
+
+# Yarn
+yarn add github:0xJord4n/ToolScope-TS
+
+# Bun
 bun add github:0xJord4n/ToolScope-TS
 ```
 
