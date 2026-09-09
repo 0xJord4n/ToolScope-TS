@@ -460,6 +460,43 @@ describe("paper-inspired tool merger", () => {
     });
   });
 
+  test("preserves legitimate schema properties named code and execute", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: {
+        code: { type: "string" },
+        execute: { type: "boolean" },
+      },
+      required: ["code", "execute"],
+    };
+    const result = await new ToolMerger({
+      embedder: embedder([[1, 0]]),
+      classifier: classifier(),
+    }).merge([{ ...raw("safe"), inputSchema }]);
+
+    expect(result.merged[0]?.inputSchema).toEqual(inputSchema);
+  });
+
+  test("preserves a __proto__ schema property without mutating the properties prototype", async () => {
+    const protoDefinition = { type: "string" };
+    const schemaProperties = Object.create(null) as Record<string, unknown>;
+    schemaProperties.__proto__ = protoDefinition;
+    const result = await new ToolMerger({
+      embedder: embedder([[1, 0]]),
+      classifier: classifier(),
+    }).merge([
+      {
+        ...raw("safe"),
+        inputSchema: { type: "object", properties: schemaProperties, required: ["__proto__"] },
+      },
+    ]);
+
+    const properties = result.merged[0]?.inputSchema.properties as Record<string, unknown>;
+    expect(Object.hasOwn(properties, "__proto__")).toBe(true);
+    expect(properties.__proto__).toEqual(protoDefinition);
+    expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
+  });
+
   test("treats a synthesized schema as advisory and does not let it remove original parameters", async () => {
     const tool = {
       ...raw("safe"),

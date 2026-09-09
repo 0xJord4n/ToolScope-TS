@@ -290,12 +290,7 @@ function assertJsonSafe(value: unknown, context: string, seen = new Set<object>(
   if (Array.isArray(value)) {
     for (const item of value) assertJsonSafe(item, context, seen);
   } else {
-    for (const [key, item] of Object.entries(value)) {
-      if (forbiddenDescriptorKeys.has(key.toLowerCase())) {
-        throw new TypeError(`Invalid ${context}: executable field ${key} is forbidden`);
-      }
-      assertJsonSafe(item, context, seen);
-    }
+    for (const item of Object.values(value)) assertJsonSafe(item, context, seen);
   }
   seen.delete(value);
 }
@@ -339,7 +334,12 @@ function consolidateSchemas<T>(cluster: readonly CanonicalTool<T>[]): JsonSchema
     const variants = [...definitions.get(name)!.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([, definition]) => definition);
-    properties[name] = variants.length === 1 ? variants[0] : { anyOf: variants };
+    Object.defineProperty(properties, name, {
+      value: variants.length === 1 ? variants[0] : { anyOf: variants },
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   const required = [...definitions.keys()]
     .filter((name) => requiredSets.every((set) => set.has(name)))
