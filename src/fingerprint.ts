@@ -1,3 +1,5 @@
+import { cloneStrictJsonData } from "./json.js";
+
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === "object")
@@ -9,7 +11,7 @@ function canonical(value: unknown): unknown {
   return value;
 }
 export function stableJson(value: unknown): string {
-  return JSON.stringify(canonical(value));
+  return JSON.stringify(canonical(cloneStrictJsonData(value, "JSON value")));
 }
 export function fingerprintTool(
   name: string,

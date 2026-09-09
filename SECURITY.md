@@ -38,6 +38,14 @@ Please avoid including real credentials, private prompts, production tool catalo
 - Validate and protect embedding endpoints and custom rerankers as external dependencies.
 - Redact prompt text and tool names before storing traces when they may contain sensitive data.
 - Keep framework and runtime dependencies updated.
+- Treat relationship classification, cluster correction, descriptor synthesis, query decomposition, and reranker responses as untrusted model output.
+- Descriptor synthesis may supply only a description. Reject synthesized schemas, tags, namespaces, and all other top-level fields; derive them only from trusted originals.
+- Treat tool descriptions, schemas, user queries, and generated subqueries as untrusted prompt data. Prompt builders delimit them, but callers remain responsible for provider-level prompt-injection defenses and input-size limits.
+- Keep the built-in resource limits enabled or lower them for your deployment. The paper subsystem caps catalogs, vectors, prompt-facing descriptor/query text, classifier calls, and concurrent model calls; it fails closed instead of silently dropping semantic work. Dense merger candidate comparison remains quadratic within the catalog cap.
+- Treat Zod and data-property `toJSON` schema adapters as executable caller-provided code. Use them only from trusted application/framework code; pass generated or remote schemas as detached plain JSON. Converted adapter output is strictly detached and validated before fingerprinting.
+- Never execute generated merged descriptors as code; resolve them to trusted original implementations through the merge manifest and authorize the selected implementation immediately before execution.
+- `MultiQueryRetrievalTrace` contains raw queries and generated subqueries and is not automatically redacted by the core `redactTrace(...)` helper.
+- Do not use the probabilistic paper-inspired pipeline without additional review in medical, legal, financial, or other high-consequence environments.
 
 ## Scope
 

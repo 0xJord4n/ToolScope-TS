@@ -21,6 +21,10 @@
     "type": "git",
     "url": "git+https://github.com/0xJord4n/ToolScope-TS.git"
   },
+  "directories": {
+    "example": "examples",
+    "test": "tests"
+  },
   "files": [
     "dist",
     "CONTRIBUTING.md",
@@ -60,13 +64,18 @@
       "import": "./dist/backends/sqlite.js",
       "default": "./dist/backends/sqlite.js"
     },
+    "./paper": {
+      "types": "./dist/paper/index.d.ts",
+      "import": "./dist/paper/index.js",
+      "default": "./dist/paper/index.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "rm -rf dist && bun build ./src/index.ts ./src/adapters/vercel-ai.ts ./src/adapters/langgraph.ts ./src/adapters/mcp.ts ./src/backends/sqlite.ts --outdir ./dist --target bun --format esm --external @langchain/core --external @langchain/langgraph --external ai --external zod && tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && bun build ./src/index.ts ./src/adapters/vercel-ai.ts ./src/adapters/langgraph.ts ./src/adapters/mcp.ts ./src/backends/sqlite.ts ./src/paper/index.ts --outdir ./dist --target bun --format esm --external @langchain/core --external @langchain/langgraph --external ai --external zod && tsc -p tsconfig.build.json",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run build",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",

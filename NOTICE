@@ -4,3 +4,12 @@ Copyright 2026 Jordan Cantin
 This product includes software derived from ToolScope,
 Copyright 2026 Ilya Kolchinsky, licensed under the Apache License 2.0.
 Original project: https://github.com/ilya-kolchinsky/ToolScope
+
+The optional paper-inspired pipeline implements concepts described in:
+Marianne Menglin Liu, Daniel Garcia, Fjona Parllaku, Vikas Upadhyay,
+Syed Fahad Allam Shah, and Dan Roth. "ToolScope: Enhancing LLM Agent
+Tool Use through Tool Merging and Context-Aware Filtering."
+ACL 2026. https://doi.org/10.18653/v1/2026.acl-long.1573
+
+ToolScope TS is not affiliated with or endorsed by the paper's authors
+or their institutions.
