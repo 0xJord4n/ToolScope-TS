@@ -33,8 +33,7 @@ describe("real framework packages", () => {
       }),
     ).toEqual(["weather"]);
     expect(
-      normalizeTool({ name: "weather", schema: z.object({ city: z.string() }) })
-        .inputSchema,
+      normalizeTool({ name: "weather", schema: z.object({ city: z.string() }) }).inputSchema,
     ).toMatchObject({
       type: "object",
       properties: { city: { type: "string" } },
@@ -68,10 +67,7 @@ describe("real framework packages", () => {
       toolScopeQuery: Annotation<string>(),
     });
     const graph = new StateGraph(State)
-      .addNode(
-        "select",
-        createLangGraphSelectionNode([weather, stocks], options),
-      )
+      .addNode("select", createLangGraphSelectionNode([weather, stocks], options))
       .addEdge(START, "select")
       .addEdge("select", END)
       .compile();

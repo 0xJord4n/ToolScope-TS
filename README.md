@@ -25,7 +25,13 @@ Models become less reliable and prompts become expensive when every turn include
 
 ## Install
 
-The repository is private, so install through authenticated GitHub access:
+Install the public npm package:
+
+```bash
+bun add toolscope-ts
+```
+
+Authenticated GitHub installs are also supported:
 
 ```bash
 bun add github:0xJord4n/ToolScope-TS
@@ -43,7 +49,7 @@ bun run check
 ## Minimal usage
 
 ```ts
-import { filter, HashEmbeddingProvider } from "@0xjordan/toolscope";
+import { filter, HashEmbeddingProvider } from "toolscope-ts";
 
 const tools = [
   { name: "jira_create_issue", description: "Create a Jira issue", inputSchema: {} },
@@ -59,7 +65,7 @@ const selected = await filter("Create a Jira ticket", tools, {
 `HashEmbeddingProvider` is dependency-free and ideal for tests/offline use. For production semantic quality, plug in your embedding service:
 
 ```ts
-import { HttpEmbeddingProvider, index } from "@0xjordan/toolscope";
+import { HttpEmbeddingProvider, index } from "toolscope-ts";
 
 const toolIndex = await index(tools, {
   embedder: new HttpEmbeddingProvider({
@@ -83,7 +89,7 @@ Use `prepareStep` to retrieve a fresh tool subset on every model step while pres
 
 ```ts
 import { generateText } from "ai";
-import { createVercelPrepareStep } from "@0xjordan/toolscope/adapters/vercel-ai";
+import { createVercelPrepareStep } from "toolscope-ts/adapters/vercel-ai";
 
 const result = await generateText({
   model,
@@ -98,7 +104,7 @@ You can also call `selectVercelTools(...)` for a filtered record or `selectVerce
 ## LangGraph.js
 
 ```ts
-import { createLangGraphToolSelector, bindSelectedTools } from "@0xjordan/toolscope/adapters/langgraph";
+import { createLangGraphToolSelector, bindSelectedTools } from "toolscope-ts/adapters/langgraph";
 
 const select = createLangGraphToolSelector(allTools, { embedder, k: 8 });
 
@@ -113,14 +119,11 @@ Keep a `ToolNode(allTools)` for execution; only the model binding is narrowed. `
 ## MCP
 
 ```ts
-import { ToolScopeMcpClient } from "@0xjordan/toolscope/adapters/mcp";
+import { ToolScopeMcpClient } from "toolscope-ts/adapters/mcp";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const client = new ToolScopeMcpClient(mcpClient, { embedder, k: 10 });
-mcpClient.setNotificationHandler(
-  ToolListChangedNotificationSchema,
-  client.toolsChangedHandler,
-);
+mcpClient.setNotificationHandler(ToolListChangedNotificationSchema, client.toolsChangedHandler);
 const { tools } = await client.listToolsFor(messages);
 await client.callTool({ name: tools[0].name, arguments: {} });
 ```
@@ -130,8 +133,8 @@ The wrapper delegates execution, follows paginated tool catalogs, and safely exp
 ## Persistent index
 
 ```ts
-import { SqliteVectorBackend } from "@0xjordan/toolscope/backends/sqlite";
-import { ToolIndex } from "@0xjordan/toolscope";
+import { SqliteVectorBackend } from "toolscope-ts/backends/sqlite";
+import { ToolIndex } from "toolscope-ts";
 
 const backend = new SqliteVectorBackend("./data/toolscope.db");
 const toolIndex = new ToolIndex({ embedder, backend });
@@ -150,7 +153,7 @@ const { tools: selected, trace } = await toolIndex.filterWithTrace(messages, {
   allowTags: ["github"],
   denyTags: ["admin", "destructive"],
   namespace: "engineering",
-  policy: async tool => authorize(user, tool.name),
+  policy: async (tool) => authorize(user, tool.name),
   reranker,
   rerankPoolSize: 30,
 });
@@ -161,7 +164,7 @@ Original tool values are returned by identity for in-memory indexes. SQLite seri
 ## Observability and redaction
 
 ```ts
-import { JsonlTraceSink, redactTrace, ToolIndex } from "@0xjordan/toolscope";
+import { JsonlTraceSink, redactTrace, ToolIndex } from "toolscope-ts";
 
 const toolIndex = new ToolIndex({
   embedder,
@@ -178,6 +181,12 @@ bun test
 bun run typecheck
 bun run build
 ```
+
+## Releases and publishing
+
+Conventional commits on `main` are managed by Release Please. Merging its release PR updates the changelog and version, creates a `v*` GitHub release, and triggers the npm publishing workflow for `toolscope-ts`.
+
+Publishing supports npm trusted publishing through GitHub Actions OIDC. The initial npm package must be bootstrapped once by an npm owner, then configured with trusted publisher repository `0xJord4n/ToolScope-TS` and workflow `release.yml`. An `NPM_TOKEN` repository secret can be used for that initial publish.
 
 ## License
 

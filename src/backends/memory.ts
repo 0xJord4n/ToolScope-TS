@@ -1,4 +1,4 @@
-import type { IndexedTool, VectorBackend } from "../types";
+import type { IndexedTool, VectorBackend } from "../types.js";
 export class MemoryVectorBackend implements VectorBackend {
   protected records = new Map<string, IndexedTool>();
   get size() {

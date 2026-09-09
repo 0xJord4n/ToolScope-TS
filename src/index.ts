@@ -1,18 +1,15 @@
-export * from "./backends/memory";
-export * from "./embeddings";
-export * from "./fingerprint";
-export * from "./normalize";
-export * from "./sinks";
-export * from "./text";
-export * from "./tool-index";
-export * from "./types";
+export * from "./backends/memory.js";
+export * from "./embeddings.js";
+export * from "./fingerprint.js";
+export * from "./normalize.js";
+export * from "./sinks.js";
+export * from "./text.js";
+export * from "./tool-index.js";
+export * from "./types.js";
 
-import { ToolIndex } from "./tool-index";
-import type { StatelessFilterOptions } from "./types";
-export async function index(
-  tools: readonly unknown[],
-  options: StatelessFilterOptions,
-) {
+import { ToolIndex } from "./tool-index.js";
+import type { StatelessFilterOptions } from "./types.js";
+export async function index(tools: readonly unknown[], options: StatelessFilterOptions) {
   const idx = new ToolIndex(options);
   await idx.add(tools);
   return idx;

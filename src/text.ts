@@ -1,18 +1,14 @@
-import { stableJson } from "./fingerprint";
-import type { CanonicalTool, ToolTextConfig } from "./types";
+import { stableJson } from "./fingerprint.js";
+import type { CanonicalTool, ToolTextConfig } from "./types.js";
 export const lowercase = () => (s: string) => s.toLowerCase();
-export const collapseWhitespace = () => (s: string) =>
-  s.replace(/\s+/g, " ").trim();
+export const collapseWhitespace = () => (s: string) => s.replace(/\s+/g, " ").trim();
 export const normalizeUnicode =
   (form: "NFC" | "NFD" | "NFKC" | "NFKD" = "NFKC") =>
   (s: string) =>
     s.normalize(form);
 export const stripControlChars = () => (s: string) =>
   s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
-export function toolText(
-  tool: CanonicalTool,
-  config: ToolTextConfig = {},
-): string {
+export function toolText(tool: CanonicalTool, config: ToolTextConfig = {}): string {
   const {
     useName = true,
     useDescription = true,

@@ -1,39 +1,99 @@
 {
-  "name": "@0xjordan/toolscope",
+  "name": "toolscope-ts",
   "version": "0.1.0",
   "description": "Semantic tool retrieval for TypeScript agents, powered by Bun",
-  "type": "module",
-  "private": true,
+  "keywords": [
+    "ai",
+    "bun",
+    "langgraph",
+    "mcp",
+    "semantic-search",
+    "tool-retrieval",
+    "typescript",
+    "vercel-ai"
+  ],
+  "homepage": "https://github.com/0xJord4n/ToolScope-TS#readme",
+  "bugs": {
+    "url": "https://github.com/0xJord4n/ToolScope-TS/issues"
+  },
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xJord4n/ToolScope-TS.git"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./adapters/vercel-ai": "./src/adapters/vercel-ai.ts",
-    "./adapters/langgraph": "./src/adapters/langgraph.ts",
-    "./adapters/mcp": "./src/adapters/mcp.ts",
-    "./backends/sqlite": "./src/backends/sqlite.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./adapters/vercel-ai": {
+      "types": "./dist/adapters/vercel-ai.d.ts",
+      "import": "./dist/adapters/vercel-ai.js",
+      "default": "./dist/adapters/vercel-ai.js"
+    },
+    "./adapters/langgraph": {
+      "types": "./dist/adapters/langgraph.d.ts",
+      "import": "./dist/adapters/langgraph.js",
+      "default": "./dist/adapters/langgraph.js"
+    },
+    "./adapters/mcp": {
+      "types": "./dist/adapters/mcp.d.ts",
+      "import": "./dist/adapters/mcp.js",
+      "default": "./dist/adapters/mcp.js"
+    },
+    "./backends/sqlite": {
+      "types": "./dist/backends/sqlite.d.ts",
+      "import": "./dist/backends/sqlite.js",
+      "default": "./dist/backends/sqlite.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
+    "build": "rm -rf dist && bun build ./src/index.ts ./src/adapters/vercel-ai.ts ./src/adapters/langgraph.ts ./src/adapters/mcp.ts ./src/backends/sqlite.ts --outdir ./dist --target bun --format esm --external @langchain/core --external @langchain/langgraph --external ai --external zod && tsc -p tsconfig.build.json",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run build",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings src tests examples",
+    "lint:fix": "oxlint --fix src tests examples",
+    "package:check": "publint && npm pack --dry-run",
+    "prepublishOnly": "bun run check",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "build": "bun build ./src/index.ts ./src/adapters/vercel-ai.ts ./src/adapters/langgraph.ts ./src/adapters/mcp.ts ./src/backends/sqlite.ts --outdir ./dist --target bun --format esm --external @langchain/core --external @langchain/langgraph --external ai",
-    "check": "bun run lint && bun run typecheck && bun test && bun run build",
-    "lint": "biome check src tests examples",
-    "format": "biome format --write src tests examples"
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
     "@langchain/core": "^1.2.9",
     "@langchain/langgraph": "^1.4.14",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/bun": "latest",
     "ai": "^7.0.93",
+    "oxfmt": "^0.67.0",
+    "oxlint": "^1.82.0",
+    "publint": "0.3.18",
     "typescript": "^5.9.2"
   },
   "peerDependencies": {
     "@langchain/core": ">=0.3.0",
     "@langchain/langgraph": ">=0.2.0",
-    "ai": ">=5.0.0",
-    "@modelcontextprotocol/sdk": ">=1.20.0"
+    "@modelcontextprotocol/sdk": ">=1.20.0",
+    "ai": ">=5.0.0"
   },
   "peerDependenciesMeta": {
     "@langchain/core": {
@@ -42,14 +102,11 @@
     "@langchain/langgraph": {
       "optional": true
     },
-    "ai": {
-      "optional": true
-    },
     "@modelcontextprotocol/sdk": {
       "optional": true
+    },
+    "ai": {
+      "optional": true
     }
-  },
-  "dependencies": {
-    "zod": "^4.5.4"
   }
 }

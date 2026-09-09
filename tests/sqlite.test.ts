@@ -11,9 +11,7 @@ test("SQLite backend persists indexed tools", async () => {
       embedder: new HashEmbeddingProvider(),
       backend,
     });
-    await first.add([
-      { name: "weather", description: "Get weather", inputSchema: {} },
-    ]);
+    await first.add([{ name: "weather", description: "Get weather", inputSchema: {} }]);
     backend.close();
     const reopened = new SqliteVectorBackend(path);
     const second = new ToolIndex({
@@ -39,9 +37,7 @@ test("SQLite backend rejects a mismatched embedding dimension", async () => {
       embedder: new HashEmbeddingProvider(32),
       backend,
     });
-    await first.add([
-      { name: "weather", description: "Get weather", inputSchema: {} },
-    ]);
+    await first.add([{ name: "weather", description: "Get weather", inputSchema: {} }]);
     backend.close();
     const reopened = new SqliteVectorBackend(path);
     const second = new ToolIndex({

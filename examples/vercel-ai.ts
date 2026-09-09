@@ -15,9 +15,9 @@ const tools = {
     execute: async ({ symbol }) => `${symbol}: 42`,
   }),
 };
-const prepareStep: PrepareStepFunction<typeof tools> = createVercelPrepareStep(
-  tools,
-  { embedder: new HashEmbeddingProvider(), k: 1 },
-);
+const prepareStep: PrepareStepFunction<typeof tools> = createVercelPrepareStep(tools, {
+  embedder: new HashEmbeddingProvider(),
+  k: 1,
+});
 // await generateText({ model, tools, prompt: "Weather in Paris?", prepareStep });
 void prepareStep;

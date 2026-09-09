@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import type { IndexedTool, VectorBackend } from "../types";
+import type { IndexedTool, VectorBackend } from "../types.js";
 export class SqliteVectorBackend implements VectorBackend {
   private db: Database;
   constructor(path: string) {
@@ -9,10 +9,7 @@ export class SqliteVectorBackend implements VectorBackend {
     );
   }
   get size() {
-    return Number(
-      (this.db.query("SELECT COUNT(*) AS n FROM tools").get() as { n: number })
-        .n,
-    );
+    return Number((this.db.query("SELECT COUNT(*) AS n FROM tools").get() as { n: number }).n);
   }
   upsert(records: IndexedTool[]) {
     const q = this.db.query(

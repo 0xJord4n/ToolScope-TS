@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, unlinkSync } from "node:fs";
-import {
-  HashEmbeddingProvider,
-  JsonlTraceSink,
-  ToolIndex,
-  type TraceSink,
-} from "../src/index";
+import { HashEmbeddingProvider, JsonlTraceSink, ToolIndex, type TraceSink } from "../src/index";
 
 const tools = [
   {
@@ -40,10 +35,7 @@ describe("advanced selection", () => {
       traceSinks: [sink],
     });
     await index.add(tools);
-    const { tools: selected, trace } = await index.filterWithTrace(
-      "weather tomorrow",
-      { k: 1 },
-    );
+    const { tools: selected, trace } = await index.filterWithTrace("weather tomorrow", { k: 1 });
     expect(selected).toHaveLength(1);
     expect(trace.candidateCount).toBe(3);
     expect(trace.selected).toHaveLength(1);

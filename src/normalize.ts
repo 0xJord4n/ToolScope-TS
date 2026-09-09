@@ -1,9 +1,8 @@
 import { toJSONSchema } from "zod";
-import { fingerprintTool } from "./fingerprint";
-import type { CanonicalTool, JsonSchema } from "./types";
+import { fingerprintTool } from "./fingerprint.js";
+import type { CanonicalTool, JsonSchema } from "./types.js";
 
-const obj = (v: unknown): v is Record<string, unknown> =>
-  !!v && typeof v === "object";
+const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object";
 function tagsOf(value: Record<string, unknown>): string[] {
   const meta = obj(value.metadata) ? value.metadata : {};
   const annotations = obj(value.annotations) ? value.annotations : {};
@@ -15,8 +14,7 @@ function tagsOf(value: Record<string, unknown>): string[] {
   ].map(String);
 }
 function schemaOf(value: Record<string, unknown>): JsonSchema {
-  const raw =
-    value.inputSchema ?? value.parameters ?? value.schema ?? value.argsSchema;
+  const raw = value.inputSchema ?? value.parameters ?? value.schema ?? value.argsSchema;
   if (obj(raw)) {
     if ("_zod" in raw || "_def" in raw) {
       try {
@@ -31,10 +29,7 @@ function schemaOf(value: Record<string, unknown>): JsonSchema {
   }
   return {};
 }
-export function normalizeTool<T>(
-  input: T,
-  forcedName?: string,
-): CanonicalTool<T> {
+export function normalizeTool<T>(input: T, forcedName?: string): CanonicalTool<T> {
   if (!obj(input)) throw new TypeError("Unsupported tool: expected an object");
   const original = input;
   let body: Record<string, unknown> = input;
@@ -45,8 +40,7 @@ export function normalizeTool<T>(
   const description = String(body.description ?? input.description ?? "");
   const inputSchema = schemaOf(body);
   const tags = [...new Set([...tagsOf(outer), ...tagsOf(body)])];
-  const namespace =
-    typeof input.namespace === "string" ? input.namespace : undefined;
+  const namespace = typeof input.namespace === "string" ? input.namespace : undefined;
   return {
     id: fingerprintTool(name, description, inputSchema, namespace),
     name,

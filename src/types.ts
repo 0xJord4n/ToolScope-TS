@@ -94,6 +94,4 @@ export interface ToolIndexOptions {
   sticky?: StickyConfig;
   traceSinks?: TraceSink[];
 }
-export interface StatelessFilterOptions
-  extends FilterOptions,
-    ToolIndexOptions {}
+export interface StatelessFilterOptions extends FilterOptions, ToolIndexOptions {}

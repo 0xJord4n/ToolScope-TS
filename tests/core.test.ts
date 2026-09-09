@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  filter,
-  HashEmbeddingProvider,
-  normalizeTool,
-  ToolIndex,
-} from "../src/index";
+import { filter, HashEmbeddingProvider, normalizeTool, ToolIndex } from "../src/index";
 
 const tools = [
   {
@@ -55,9 +50,7 @@ describe("normalization and filtering", () => {
     });
     expect(result[0]).toBe(tools[0]);
     expect(result).not.toContain(tools[2]);
-    expect(await index.filter("search", { k: 5, allowTags: ["docs"] })).toEqual(
-      [tools[1]],
-    );
+    expect(await index.filter("search", { k: 5, allowTags: ["docs"] })).toEqual([tools[1]]);
   });
   test("stateless filter has parity with indexed filtering", async () => {
     expect(
@@ -84,9 +77,7 @@ describe("normalization and filtering", () => {
         },
       },
     });
-    await index.add([
-      { name: "temporary", description: "Temporary", inputSchema: {} },
-    ]);
+    await index.add([{ name: "temporary", description: "Temporary", inputSchema: {} }]);
     await expect(index.sync([])).resolves.toBe(index);
     expect(index.size).toBe(0);
   });
@@ -99,8 +90,6 @@ describe("normalization and filtering", () => {
         },
       },
     });
-    expect(
-      index.add([{ name: "bad", description: "Bad", inputSchema: {} }]),
-    ).rejects.toThrow();
+    expect(index.add([{ name: "bad", description: "Bad", inputSchema: {} }])).rejects.toThrow();
   });
 });

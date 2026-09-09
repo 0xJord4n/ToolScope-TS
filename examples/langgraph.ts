@@ -1,8 +1,5 @@
 import { HashEmbeddingProvider } from "../src";
-import {
-  bindSelectedTools,
-  createLangGraphToolSelector,
-} from "../src/adapters/langgraph";
+import { bindSelectedTools, createLangGraphToolSelector } from "../src/adapters/langgraph";
 
 const tools: Array<{
   name: string;

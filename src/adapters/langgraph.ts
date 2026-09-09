@@ -1,5 +1,5 @@
-import { messagesToQueryText, ToolIndex } from "../tool-index";
-import type { FilterOptions, StatelessFilterOptions } from "../types";
+import { messagesToQueryText, ToolIndex } from "../tool-index.js";
+import type { FilterOptions, StatelessFilterOptions } from "../types.js";
 export function createLangGraphToolSelector<T>(
   tools: readonly T[],
   options: StatelessFilterOptions,
@@ -11,10 +11,7 @@ export function createLangGraphToolSelector<T>(
       await i.add(tools);
       return i;
     })());
-  return async (
-    messages: unknown,
-    overrides: FilterOptions = {},
-  ): Promise<T[]> =>
+  return async (messages: unknown, overrides: FilterOptions = {}): Promise<T[]> =>
     (await (await get()).filter(messages, { ...options, ...overrides })) as T[];
 }
 export function createLangGraphSelectionNode<T>(
@@ -27,9 +24,7 @@ export function createLangGraphSelectionNode<T>(
     toolScopeQuery: messagesToQueryText(state.messages ?? ""),
   });
 }
-export async function bindSelectedTools<
-  TModel extends { bindTools(tools: unknown[]): unknown },
->(
+export async function bindSelectedTools<TModel extends { bindTools(tools: unknown[]): unknown }>(
   model: TModel,
   selector: (messages: unknown) => Promise<unknown[]>,
   messages: unknown,

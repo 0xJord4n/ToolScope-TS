@@ -1,6 +1,6 @@
-import { MemoryVectorBackend } from "./backends/memory";
-import { normalizeTools } from "./normalize";
-import { toolText } from "./text";
+import { MemoryVectorBackend } from "./backends/memory.js";
+import { normalizeTools } from "./normalize.js";
+import { toolText } from "./text.js";
 import type {
   FilterOptions,
   IndexedTool,
@@ -8,7 +8,7 @@ import type {
   StickyConfig,
   ToolIndexOptions,
   ToolScore,
-} from "./types";
+} from "./types.js";
 
 const cosine = (a: number[], b: number[]) => {
   if (a.length === 0 || a.length !== b.length) {
@@ -41,11 +41,7 @@ const lexical = (q: string, d: string) => {
   for (const x of a) if (b.has(x)) hit++;
   return hit / (Math.sqrt(a.size * b.size) || 1);
 };
-function validateVectors(
-  vectors: number[][],
-  expectedCount: number,
-  expectedDimension?: number,
-) {
+function validateVectors(vectors: number[][], expectedCount: number, expectedDimension?: number) {
   if (vectors.length !== expectedCount) {
     throw new Error("Embedder returned the wrong vector count");
   }
@@ -74,9 +70,7 @@ export function messagesToQueryText(messages: unknown): string {
         .map((v) =>
           typeof v === "string"
             ? v
-            : v &&
-                typeof v === "object" &&
-                typeof (v as Record<string, unknown>).text === "string"
+            : v && typeof v === "object" && typeof (v as Record<string, unknown>).text === "string"
               ? String((v as Record<string, unknown>).text)
               : "",
         )
@@ -121,11 +115,7 @@ export class ToolIndex {
     if (tools.length === 0) return this;
     const texts = tools.map((t) => toolText(t, this.textConfig));
     const vectors = await this.embedder.embed(texts);
-    validateVectors(
-      vectors,
-      tools.length,
-      this.backend.list()[0]?.vector.length,
-    );
+    validateVectors(vectors, tools.length, this.backend.list()[0]?.vector.length);
     await this.backend.upsert(
       tools.map((tool, i) => ({ tool, vector: vectors[i]!, text: texts[i]! })),
     );
@@ -204,11 +194,7 @@ export class ToolIndex {
     });
     scores = scores
       .filter((x) => x.score >= (options.minScore ?? 0.01))
-      .sort(
-        (a, b) =>
-          b.score - a.score ||
-          a.record.tool.name.localeCompare(b.record.tool.name),
-      );
+      .sort((a, b) => b.score - a.score || a.record.tool.name.localeCompare(b.record.tool.name));
     const searchDone = performance.now();
     let rerankMs = 0;
     if (options.reranker && scores.length) {
@@ -218,10 +204,7 @@ export class ToolIndex {
         query,
         pool.map((x) => x.record.tool),
       );
-      if (
-        values.length !== pool.length ||
-        values.some((value) => !Number.isFinite(value))
-      ) {
+      if (values.length !== pool.length || values.some((value) => !Number.isFinite(value))) {
         throw new Error("Reranker returned invalid scores");
       }
       pool.forEach((x, i) => {
@@ -245,11 +228,7 @@ export class ToolIndex {
         for (let i = 0; i < remaining.length; i++) {
           const relevance = remaining[i]!.score;
           const similarity = diverse.length
-            ? Math.max(
-                ...diverse.map((x) =>
-                  cosine(x.record.vector, remaining[i]!.record.vector),
-                ),
-              )
+            ? Math.max(...diverse.map((x) => cosine(x.record.vector, remaining[i]!.record.vector)))
             : 0;
           const mmr = lambda * relevance - (1 - lambda) * similarity;
           if (mmr > bestScore) {
@@ -297,9 +276,7 @@ export class ToolIndex {
       }
       if (this.sticky.maxSessions > 0) {
         if (!old && this.sessions.size >= this.sticky.maxSessions) {
-          const oldest = [...this.sessions.entries()].sort(
-            ([, a], [, b]) => a.at - b.at,
-          )[0];
+          const oldest = [...this.sessions.entries()].sort(([, a], [, b]) => a.at - b.at)[0];
           if (oldest) this.sessions.delete(oldest[0]);
         }
         this.sessions.set(options.sessionId, {

@@ -39,9 +39,9 @@ describe("framework adapters", () => {
       embedder: new HashEmbeddingProvider(),
       k: 1,
     });
-    expect(
-      await prepareStep({ messages: [{ role: "user", content: "weather" }] }),
-    ).toEqual({ activeTools: ["weather"] });
+    expect(await prepareStep({ messages: [{ role: "user", content: "weather" }] })).toEqual({
+      activeTools: ["weather"],
+    });
   });
   test("Vercel AI adapter preserves policy metadata", async () => {
     const tagged = {
@@ -103,10 +103,9 @@ describe("framework adapters", () => {
       backend: new MemoryVectorBackend(),
       k: 5,
     });
-    expect(
-      ((await wrapped.listToolsFor("weather")).tools[0] as { name: string })
-        ?.name,
-    ).toBe("weather");
+    expect(((await wrapped.listToolsFor("weather")).tools[0] as { name: string })?.name).toBe(
+      "weather",
+    );
     changed?.();
     expect(await wrapped.callTool({ name: "weather" })).toEqual({
       name: "weather",
@@ -136,9 +135,7 @@ describe("framework adapters", () => {
       k: 5,
     });
     await wrapped.listToolsFor("delete");
-    current = [
-      { name: "weather", description: "Get weather", inputSchema: {} },
-    ];
+    current = [{ name: "weather", description: "Get weather", inputSchema: {} }];
     wrapped.markDirty();
     expect((await wrapped.listToolsFor("delete")).tools).toEqual([]);
   });
@@ -148,9 +145,7 @@ describe("framework adapters", () => {
       async listTools(request?: unknown) {
         if (request) {
           return {
-            tools: [
-              { name: "second", description: "Second page", inputSchema: {} },
-            ],
+            tools: [{ name: "second", description: "Second page", inputSchema: {} }],
           };
         }
         return {
@@ -173,17 +168,13 @@ describe("framework adapters", () => {
       embedder: new HashEmbeddingProvider(),
       k: 5,
     });
-    expect(
-      (await wrapped.listToolsFor("page", { minScore: -1 })).tools,
-    ).toHaveLength(2);
+    expect((await wrapped.listToolsFor("page", { minScore: -1 })).tools).toHaveLength(2);
     revoked = true;
     wrapped.toolsChangedHandler();
     const refreshed = await wrapped.listToolsFor("first", {
       denyTags: ["revoked"],
       minScore: -1,
     });
-    expect(
-      refreshed.tools.map((tool) => (tool as { name: string }).name),
-    ).toEqual(["second"]);
+    expect(refreshed.tools.map((tool) => (tool as { name: string }).name)).toEqual(["second"]);
   });
 });

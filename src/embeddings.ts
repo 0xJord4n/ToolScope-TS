@@ -1,4 +1,4 @@
-import type { EmbeddingProvider } from "./types";
+import type { EmbeddingProvider } from "./types.js";
 
 const tokens = (s: string) =>
   s
@@ -12,8 +12,7 @@ const tokens = (s: string) =>
     });
 function hash(s: string): number {
   let h = 2166136261;
-  for (let i = 0; i < s.length; i++)
-    h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
 }
 export class HashEmbeddingProvider implements EmbeddingProvider {
@@ -48,9 +47,7 @@ export class HttpEmbeddingProvider implements EmbeddingProvider {
     const f = this.options.fetch ?? globalThis.fetch;
     const headers = {
       "content-type": "application/json",
-      ...(this.options.apiKey
-        ? { authorization: `Bearer ${this.options.apiKey}` }
-        : {}),
+      ...(this.options.apiKey ? { authorization: `Bearer ${this.options.apiKey}` } : {}),
       ...this.options.headers,
     };
     const response = await f(this.options.endpoint, {
@@ -59,23 +56,18 @@ export class HttpEmbeddingProvider implements EmbeddingProvider {
       body: JSON.stringify({ input: texts, model: this.options.model }),
     });
     if (!response.ok)
-      throw new Error(
-        `Embedding request failed: ${response.status} ${await response.text()}`,
-      );
+      throw new Error(`Embedding request failed: ${response.status} ${await response.text()}`);
     const data = (await response.json()) as {
       data?: Array<{ embedding: number[] }>;
       embeddings?: number[][];
     };
     const vectors = data.data?.map((x) => x.embedding) ?? data.embeddings;
-    if (!vectors || vectors.length !== texts.length)
-      throw new Error("Invalid embedding response");
+    if (!vectors || vectors.length !== texts.length) throw new Error("Invalid embedding response");
     return vectors;
   }
 }
 export class FunctionEmbeddingProvider implements EmbeddingProvider {
-  constructor(
-    private fn: (texts: string[]) => Promise<number[][]> | number[][],
-  ) {}
+  constructor(private fn: (texts: string[]) => Promise<number[][]> | number[][]) {}
   async embed(texts: string[]) {
     return await this.fn(texts);
   }

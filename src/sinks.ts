@@ -1,5 +1,5 @@
 import { appendFile } from "node:fs/promises";
-import type { SelectionTrace, TraceSink } from "./types";
+import type { SelectionTrace, TraceSink } from "./types.js";
 export type TraceTransform = (trace: SelectionTrace) => unknown;
 export class JsonlTraceSink implements TraceSink {
   constructor(
@@ -7,11 +7,7 @@ export class JsonlTraceSink implements TraceSink {
     private transform: TraceTransform = (trace) => trace,
   ) {}
   async emit(trace: SelectionTrace) {
-    await appendFile(
-      this.path,
-      `${JSON.stringify(this.transform(trace))}\n`,
-      "utf8",
-    );
+    await appendFile(this.path, `${JSON.stringify(this.transform(trace))}\n`, "utf8");
   }
 }
 export class ConsoleTraceSink implements TraceSink {
@@ -21,16 +17,12 @@ export class ConsoleTraceSink implements TraceSink {
   }
 }
 export class CallbackTraceSink implements TraceSink {
-  constructor(
-    private callback: (trace: SelectionTrace) => void | Promise<void>,
-  ) {}
+  constructor(private callback: (trace: SelectionTrace) => void | Promise<void>) {}
   emit(trace: SelectionTrace) {
     return this.callback(trace);
   }
 }
-export function redactTrace(
-  options: { query?: boolean; toolNames?: boolean } = {},
-) {
+export function redactTrace(options: { query?: boolean; toolNames?: boolean } = {}) {
   return (trace: SelectionTrace) => ({
     ...trace,
     query: options.query === false ? trace.query : "[REDACTED]",

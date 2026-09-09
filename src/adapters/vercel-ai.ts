@@ -1,5 +1,5 @@
-import { ToolIndex } from "../tool-index";
-import type { StatelessFilterOptions } from "../types";
+import { ToolIndex } from "../tool-index.js";
+import type { StatelessFilterOptions } from "../types.js";
 export type VercelToolSet = Record<string, unknown>;
 const objectValue = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -65,9 +65,7 @@ export async function selectVercelActiveTools<T extends VercelToolSet>(
   tools: T,
   options: StatelessFilterOptions,
 ): Promise<Array<keyof T & string>> {
-  return Object.keys(
-    await selectVercelTools(messages, tools, options),
-  ) as Array<keyof T & string>;
+  return Object.keys(await selectVercelTools(messages, tools, options)) as Array<keyof T & string>;
 }
 export function createVercelPrepareStep<T extends VercelToolSet>(
   tools: T,

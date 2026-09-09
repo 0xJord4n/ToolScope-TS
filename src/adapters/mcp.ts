@@ -1,9 +1,7 @@
-import { ToolIndex } from "../tool-index";
-import type { FilterOptions, StatelessFilterOptions } from "../types";
+import { ToolIndex } from "../tool-index.js";
+import type { FilterOptions, StatelessFilterOptions } from "../types.js";
 export interface McpLikeClient {
-  listTools(
-    ...args: unknown[]
-  ): Promise<{ tools: unknown[]; [key: string]: unknown }>;
+  listTools(...args: unknown[]): Promise<{ tools: unknown[]; [key: string]: unknown }>;
   callTool(request: unknown, ...args: unknown[]): Promise<unknown>;
   onToolsChanged?(handler: () => void): void;
 }
@@ -36,10 +34,7 @@ export class ToolScopeMcpClient {
             ? await this.client.listTools({ cursor })
             : await this.client.listTools();
           tools.push(...response.tools);
-          cursor =
-            typeof response.nextCursor === "string"
-              ? response.nextCursor
-              : undefined;
+          cursor = typeof response.nextCursor === "string" ? response.nextCursor : undefined;
         } while (cursor);
         this.index ??= new ToolIndex(this.options);
         await this.index.sync(tools);

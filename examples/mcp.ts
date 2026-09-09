@@ -11,10 +11,7 @@ const scopedClient = new ToolScopeMcpClient(client, {
 
 // Register through your application's notification dispatcher. ToolScope does
 // not silently replace handlers owned by the application.
-client.setNotificationHandler(
-  ToolListChangedNotificationSchema,
-  scopedClient.toolsChangedHandler,
-);
+client.setNotificationHandler(ToolListChangedNotificationSchema, scopedClient.toolsChangedHandler);
 
 // Connect the official client to a transport, then:
 // const { tools } = await scopedClient.listToolsFor(messages);
