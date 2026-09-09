@@ -202,12 +202,6 @@ bun run typecheck
 bun run build
 ```
 
-## Releases and publishing
-
-Conventional commits on `main` are managed by Release Please. Merging its release PR updates the changelog and version, creates a `v*` GitHub release, and triggers the npm publishing workflow for `toolscope-ts`.
-
-Publishing supports npm trusted publishing through GitHub Actions OIDC. The initial npm package must be bootstrapped once by an npm owner, then configured with trusted publisher repository `0xJord4n/ToolScope-TS` and workflow `release.yml`. An `NPM_TOKEN` repository secret can be used for that initial publish.
-
 ## License
 
 Apache-2.0. This derivative preserves attribution to the original ToolScope project in [NOTICE](NOTICE).
