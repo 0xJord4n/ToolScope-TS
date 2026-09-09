@@ -23,9 +23,11 @@
   },
   "files": [
     "dist",
+    "CONTRIBUTING.md",
     "LICENSE",
     "NOTICE",
-    "README.md"
+    "README.md",
+    "SECURITY.md"
   ],
   "type": "module",
   "sideEffects": false,

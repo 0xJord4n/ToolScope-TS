@@ -1,111 +1,112 @@
 # ToolScope TS
 
-Semantic, per-prompt tool selection for TypeScript agents. It keeps large tool catalogs out of the model context without introducing a meta-tool or changing how tools are called. Built for **Bun**, with first-class adapters for **LangGraph.js**, the **Vercel AI SDK**, and **MCP**.
+[![npm version](https://img.shields.io/npm/v/toolscope-ts.svg)](https://www.npmjs.com/package/toolscope-ts)
+[![npm downloads](https://img.shields.io/npm/dm/toolscope-ts.svg)](https://www.npmjs.com/package/toolscope-ts)
+[![CI](https://github.com/0xJord4n/ToolScope-TS/actions/workflows/ci.yml/badge.svg)](https://github.com/0xJord4n/ToolScope-TS/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6.svg)](https://www.typescriptlang.org/)
+[![Bun](https://img.shields.io/badge/Bun-1.3+-000000.svg)](https://bun.sh/)
+[![GitHub stars](https://img.shields.io/github/stars/0xJord4n/ToolScope-TS.svg)](https://github.com/0xJord4n/ToolScope-TS/stargazers)
 
-This is a TypeScript port and extension of [ToolScope](https://github.com/ilya-kolchinsky/ToolScope). See [NOTICE](NOTICE).
+**Semantic tool retrieval for TypeScript agents, powered by Bun.**
 
-## Why
+ToolScope TS selects the most relevant tools for each prompt before the model runs. It keeps large tool catalogs out of the context window while preserving the original executable tool objects and their normal calling behavior.
 
-Models become less reliable and prompts become expensive when every turn includes hundreds or thousands of tool schemas. ToolScope TS embeds the current request, retrieves the best tools, applies policy, and returns the original tool objects unchanged.
+Built for [LangGraph.js](https://github.com/langchain-ai/langgraphjs), the [Vercel AI SDK](https://ai-sdk.dev/), and the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-## Features
+[**npm**](https://www.npmjs.com/package/toolscope-ts) · [**latest release**](https://github.com/0xJord4n/ToolScope-TS/releases/latest) · [**issues**](https://github.com/0xJord4n/ToolScope-TS/issues)
 
-- Canonical normalization for MCP, OpenAI function tools, LangChain/LangGraph tools, and Vercel AI tool records
-- Stateless `filter(...)` and reusable `ToolIndex` APIs
-- Pluggable embedding providers; HTTP/OpenAI-compatible and deterministic local hashing included
-- Hybrid semantic + lexical scoring, score thresholds, custom rerankers, and MMR diversity
-- Allow/deny tags, namespaces, and async policy callbacks
-- Sticky toolsets for multi-turn sessions
-- Rich timing/score traces with callback, console, and redacted JSONL sinks
-- In-memory backend and Bun SQLite persistence
-- MCP client wrapper with `tools/list_changed` invalidation
-- Vercel AI SDK `activeTools` and `prepareStep` integration
-- LangGraph dynamic `bindTools` selector and graph selection node
-- No hidden model downloads and no required cloud service
+## Why ToolScope TS?
+
+Sending every available tool schema on every turn increases token usage and can make tool selection less reliable. ToolScope TS adds a retrieval step in front of the model:
+
+1. Normalize tools from supported frameworks into one internal representation.
+2. Embed the current request and retrieve the strongest candidates.
+3. Apply tags, namespaces, policies, thresholds, reranking, and diversity controls.
+4. Return the original tool objects unchanged for normal execution.
+
+It is a selector—not an agent, proxy, executor, or meta-tool.
+
+## Highlights
+
+- **Framework-native** — accepts MCP, OpenAI-style, LangChain/LangGraph, and Vercel AI tools
+- **Original object identity** — returns executable tool objects instead of reconstructed wrappers
+- **Flexible retrieval** — semantic + lexical scoring, custom rerankers, thresholds, and MMR diversity
+- **Policy-aware** — allow/deny tags, namespaces, async callbacks, and metadata-safe synchronization
+- **Multi-turn ready** — bounded sticky toolsets reduce unnecessary selection churn
+- **Observable** — structured candidate scores, selection counts, timing traces, and redaction helpers
+- **Persistent when needed** — in-memory operation by default, with Bun SQLite support
+- **Self-contained** — no required cloud service, hidden model download, or telemetry
 
 ## Install
 
-Install the public package with your preferred package manager:
+```bash
+npm install toolscope-ts
+```
+
+<details>
+<summary>Other package managers</summary>
 
 ```bash
-# npm
-npm install toolscope-ts
-
-# pnpm
 pnpm add toolscope-ts
-
-# Yarn
 yarn add toolscope-ts
-
-# Bun
 bun add toolscope-ts
 ```
 
-Authenticated GitHub installs are also supported:
+</details>
 
-```bash
-# npm
-npm install github:0xJord4n/ToolScope-TS
-
-# pnpm
-pnpm add github:0xJord4n/ToolScope-TS
-
-# Yarn
-yarn add github:0xJord4n/ToolScope-TS
-
-# Bun
-bun add github:0xJord4n/ToolScope-TS
-```
-
-For local development:
-
-```bash
-git clone git@github.com:0xJord4n/ToolScope-TS.git
-cd ToolScope-TS
-bun install
-bun run check
-```
-
-## Minimal usage
+## Quick start
 
 ```ts
 import { filter, HashEmbeddingProvider } from "toolscope-ts";
 
 const tools = [
-  { name: "jira_create_issue", description: "Create a Jira issue", inputSchema: {} },
-  { name: "confluence_search", description: "Search Confluence pages", inputSchema: {} },
+  {
+    name: "jira_create_issue",
+    description: "Create a Jira issue",
+    inputSchema: {},
+  },
+  {
+    name: "confluence_search",
+    description: "Search Confluence pages",
+    inputSchema: {},
+  },
 ];
 
 const selected = await filter("Create a Jira ticket", tools, {
   embedder: new HashEmbeddingProvider(),
   k: 1,
 });
+
+console.log(selected[0]); // the original jira_create_issue tool
 ```
 
-`HashEmbeddingProvider` is dependency-free and ideal for tests/offline use. For production semantic quality, plug in your embedding service:
+`HashEmbeddingProvider` is deterministic, dependency-free, and useful for tests or offline workflows. For production semantic quality, connect an embedding service.
+
+## Production embeddings
+
+`HttpEmbeddingProvider` supports OpenAI-compatible embedding endpoints:
 
 ```ts
 import { HttpEmbeddingProvider, index } from "toolscope-ts";
 
-const toolIndex = await index(tools, {
-  embedder: new HttpEmbeddingProvider({
-    endpoint: "https://api.openai.com/v1/embeddings",
-    model: "text-embedding-3-small",
-    apiKey: process.env.OPENAI_API_KEY,
-  }),
+const embedder = new HttpEmbeddingProvider({
+  endpoint: "https://api.openai.com/v1/embeddings",
+  model: "text-embedding-3-small",
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
-const selected = await toolIndex.filter(messages, {
-  k: 8,
-  allowTags: ["read"],
-  denyTags: ["destructive"],
-  sessionId: conversationId,
-});
+const toolIndex = await index(tools, { embedder });
+const selected = await toolIndex.filter(messages, { k: 8 });
 ```
 
-## Vercel AI SDK
+You can also implement `EmbeddingProvider` directly or wrap any function with `FunctionEmbeddingProvider`.
 
-Use `prepareStep` to retrieve a fresh tool subset on every model step while preserving one stable `tools` record:
+## Framework integrations
+
+### Vercel AI SDK
+
+Use `prepareStep` to select a fresh subset on each model step while keeping one stable tool record:
 
 ```ts
 import { generateText } from "ai";
@@ -119,12 +120,14 @@ const result = await generateText({
 });
 ```
 
-You can also call `selectVercelTools(...)` for a filtered record or `selectVercelActiveTools(...)` for tool-name keys.
+The adapter also exposes `selectVercelTools(...)`, `selectVercelActiveTools(...)`, and `createVercelToolSelector(...)`.
 
-## LangGraph.js
+### LangGraph.js
+
+Select tools before binding them to the model:
 
 ```ts
-import { createLangGraphToolSelector, bindSelectedTools } from "toolscope-ts/adapters/langgraph";
+import { bindSelectedTools, createLangGraphToolSelector } from "toolscope-ts/adapters/langgraph";
 
 const select = createLangGraphToolSelector(allTools, { embedder, k: 8 });
 
@@ -134,34 +137,27 @@ const modelNode = async (state: { messages: unknown[] }) => {
 };
 ```
 
-Keep a `ToolNode(allTools)` for execution; only the model binding is narrowed. `createLangGraphSelectionNode(...)` is available when selected tools should be stored in graph state.
+Keep `ToolNode(allTools)` available for execution; only the model binding is narrowed. Use `createLangGraphSelectionNode(...)` when selected tools should be stored in graph state.
 
-## MCP
+### MCP
+
+Synchronize an MCP catalog and retrieve only the tools needed for the current request:
 
 ```ts
-import { ToolScopeMcpClient } from "toolscope-ts/adapters/mcp";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ToolScopeMcpClient } from "toolscope-ts/adapters/mcp";
 
 const client = new ToolScopeMcpClient(mcpClient, { embedder, k: 10 });
+
 mcpClient.setNotificationHandler(ToolListChangedNotificationSchema, client.toolsChangedHandler);
+
 const { tools } = await client.listToolsFor(messages);
 await client.callTool({ name: tools[0].name, arguments: {} });
 ```
 
-The wrapper delegates execution, follows paginated tool catalogs, and safely exposes a list-change handler for your application's notification dispatcher. It does not silently replace handlers owned by the application. Custom clients may instead expose `onToolsChanged(handler)`.
+The wrapper follows paginated catalogs, synchronizes additions and removals, and exposes list-change invalidation without silently replacing application-owned handlers.
 
-## Persistent index
-
-```ts
-import { SqliteVectorBackend } from "toolscope-ts/backends/sqlite";
-import { ToolIndex } from "toolscope-ts";
-
-const backend = new SqliteVectorBackend("./data/toolscope.db");
-const toolIndex = new ToolIndex({ embedder, backend });
-await toolIndex.sync(tools);
-```
-
-## Selection controls
+## Retrieval and policy controls
 
 ```ts
 const { tools: selected, trace } = await toolIndex.filterWithTrace(messages, {
@@ -173,15 +169,42 @@ const { tools: selected, trace } = await toolIndex.filterWithTrace(messages, {
   allowTags: ["github"],
   denyTags: ["admin", "destructive"],
   namespace: "engineering",
-  policy: async (tool) => authorize(user, tool.name),
+  policy: async (tool) => isEligibleForRetrieval(user, tool.name),
   reranker,
   rerankPoolSize: 30,
 });
 ```
 
-Original tool values are returned by identity for in-memory indexes. SQLite serializes JSON-safe tool descriptors; use the persistent backend for catalogs/descriptors, not executable function closures.
+`policy` controls retrieval eligibility, not execution authorization. Authorize the selected tool again before running it.
 
-## Observability and redaction
+Available controls include:
+
+- semantic and lexical hybrid scoring
+- minimum score thresholds and top-`k` limits
+- custom rerankers and MMR diversity
+- allow/deny tags and namespace filtering
+- synchronous or asynchronous policy callbacks
+- bounded sticky toolsets for multi-turn sessions
+
+Policy metadata is refreshed during catalog synchronization so changed authorization tags and executable identities are not retained as stale records.
+
+## Persistence
+
+Use the in-memory backend by default, or persist descriptor catalogs with Bun SQLite:
+
+```ts
+import { ToolIndex } from "toolscope-ts";
+import { SqliteVectorBackend } from "toolscope-ts/backends/sqlite";
+
+const backend = new SqliteVectorBackend("./data/toolscope.db");
+const toolIndex = new ToolIndex({ embedder, backend });
+
+await toolIndex.sync(tools);
+```
+
+In-memory indexes return original tool values by identity. SQLite stores JSON-safe descriptors, so executable function closures should be supplied again by the application rather than treated as persistent data.
+
+## Observability and privacy
 
 ```ts
 import { JsonlTraceSink, redactTrace, ToolIndex } from "toolscope-ts";
@@ -192,16 +215,53 @@ const toolIndex = new ToolIndex({
 });
 ```
 
-Traces contain candidate counts, selected and rejected scores, filter configuration, and embedding/search/rerank timings. Do not persist raw prompts unless your privacy policy allows it.
+Selection traces include candidate and filtered counts, per-candidate scores, selected tools, recorded retrieval settings, and embedding/search/rerank timings. Callback and console sinks are also included.
+
+Raw prompts may contain sensitive information. Redact or avoid persisting query text unless your privacy policy permits it.
+
+## Package exports
+
+| Import                            | Purpose                                                               |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `toolscope-ts`                    | Core index, filters, embeddings, memory backend, policies, and traces |
+| `toolscope-ts/adapters/vercel-ai` | Vercel AI SDK selection helpers                                       |
+| `toolscope-ts/adapters/langgraph` | LangGraph selectors and dynamic model binding                         |
+| `toolscope-ts/adapters/mcp`       | MCP catalog synchronization and selection                             |
+| `toolscope-ts/backends/sqlite`    | Bun SQLite persistence                                                |
+
+The package ships ESM JavaScript and TypeScript declarations. Framework integrations are optional peer dependencies; install only the adapters your application uses.
+
+## Examples
+
+- [Minimal selection](examples/minimal.ts)
+- [Vercel AI SDK](examples/vercel-ai.ts)
+- [LangGraph.js](examples/langgraph.ts)
+- [MCP](examples/mcp.ts)
 
 ## Development
 
+Requires Bun 1.3 or newer.
+
 ```bash
-bun test
-bun run typecheck
-bun run build
+git clone https://github.com/0xJord4n/ToolScope-TS.git
+cd ToolScope-TS
+bun install
+bun run check
+bun run package:check
 ```
 
-## License
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete contribution workflow.
 
-Apache-2.0. This derivative preserves attribution to the original ToolScope project in [NOTICE](NOTICE).
+## Security
+
+Do not report vulnerabilities through public issues. See [SECURITY.md](SECURITY.md) for supported versions and private reporting instructions.
+
+## Support
+
+For usage questions, bug reports, and feature requests, [open an issue](https://github.com/0xJord4n/ToolScope-TS/issues). Include a minimal reproduction when reporting unexpected behavior.
+
+## License and attribution
+
+Licensed under [Apache-2.0](LICENSE).
+
+ToolScope TS is a TypeScript port and extension of [ToolScope](https://github.com/ilya-kolchinsky/ToolScope) by Ilya Kolchinsky. See [NOTICE](NOTICE) for attribution and modification details.
