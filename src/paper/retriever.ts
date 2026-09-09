@@ -3,7 +3,7 @@ import type { FilterOptions, IndexedTool, Reranker } from "../types.js";
 
 export const PAPER_2026_RETRIEVER_DEFAULTS = {
   alpha: 1,
-  candidatePoolSize: 50,
+  rerankPoolSize: 50,
   epsilon: 1e-12,
 } as const;
 
@@ -18,14 +18,14 @@ export interface MultiQueryRetrieverOptions extends RetrievalFilters {
   decomposer: QueryDecomposer;
   reranker: Reranker;
   k: number;
-  candidatePoolSize?: number;
+  rerankPoolSize?: number;
   epsilon?: number;
   alpha?: number;
 }
 
 export interface MultiQueryRetrieveOptions extends RetrievalFilters {
   k?: number;
-  candidatePoolSize?: number;
+  rerankPoolSize?: number;
   epsilon?: number;
   alpha?: number;
 }
@@ -56,7 +56,7 @@ export interface MultiQueryStepTrace {
 export interface MultiQueryRetrievalTrace {
   query: string;
   k: number;
-  candidatePoolSize: number;
+  rerankPoolSize: number;
   alpha: number;
   epsilon: number;
   normalizationScope: "per-query";
@@ -175,13 +175,13 @@ function validateQueryVector(vector: number[]): void {
 
 function validateConfiguration(
   k: number,
-  candidatePoolSize: number,
+  rerankPoolSize: number,
   epsilon: number,
   alpha: number,
 ): void {
   if (!Number.isInteger(k) || k < 1) throw new RangeError("k must be at least 1");
-  if (!Number.isInteger(candidatePoolSize) || candidatePoolSize < 1) {
-    throw new RangeError("candidatePoolSize must be at least 1");
+  if (!Number.isInteger(rerankPoolSize) || rerankPoolSize < 1) {
+    throw new RangeError("rerankPoolSize must be at least 1");
   }
   if (!Number.isFinite(epsilon) || epsilon <= 0) {
     throw new RangeError("epsilon must be greater than zero");
@@ -224,7 +224,7 @@ export class MultiQueryRetriever<T = unknown> {
   constructor(options: MultiQueryRetrieverOptions) {
     validateConfiguration(
       options.k,
-      options.candidatePoolSize ?? PAPER_2026_RETRIEVER_DEFAULTS.candidatePoolSize,
+      options.rerankPoolSize ?? PAPER_2026_RETRIEVER_DEFAULTS.rerankPoolSize,
       options.epsilon ?? PAPER_2026_RETRIEVER_DEFAULTS.epsilon,
       options.alpha ?? PAPER_2026_RETRIEVER_DEFAULTS.alpha,
     );
@@ -236,14 +236,14 @@ export class MultiQueryRetriever<T = unknown> {
     overrides: MultiQueryRetrieveOptions = {},
   ): Promise<MultiQueryRetrievalResult<T>> {
     const k = overrides.k ?? this.options.k;
-    const candidatePoolSize =
-      overrides.candidatePoolSize ??
-      this.options.candidatePoolSize ??
-      PAPER_2026_RETRIEVER_DEFAULTS.candidatePoolSize;
+    const rerankPoolSize =
+      overrides.rerankPoolSize ??
+      this.options.rerankPoolSize ??
+      PAPER_2026_RETRIEVER_DEFAULTS.rerankPoolSize;
     const epsilon =
       overrides.epsilon ?? this.options.epsilon ?? PAPER_2026_RETRIEVER_DEFAULTS.epsilon;
     const alpha = overrides.alpha ?? this.options.alpha ?? PAPER_2026_RETRIEVER_DEFAULTS.alpha;
-    validateConfiguration(k, candidatePoolSize, epsilon, alpha);
+    validateConfiguration(k, rerankPoolSize, epsilon, alpha);
 
     const query = messagesToQueryText(messages);
     const decomposition = await this.options.decomposer.decompose(query);
@@ -297,7 +297,7 @@ export class MultiQueryRetriever<T = unknown> {
             right.hybridScore - left.hybridScore ||
             left.record.tool.id.localeCompare(right.record.tool.id),
         )
-        .slice(0, candidatePoolSize);
+        .slice(0, rerankPoolSize);
       const rerankerScores = await this.options.reranker.rerank(
         stepQuery,
         hybrid.map((candidate) => candidate.record.tool),
@@ -382,7 +382,7 @@ export class MultiQueryRetriever<T = unknown> {
       trace: {
         query,
         k,
-        candidatePoolSize,
+        rerankPoolSize,
         alpha,
         epsilon,
         normalizationScope: "per-query",

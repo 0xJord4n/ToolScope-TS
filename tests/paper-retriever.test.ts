@@ -35,7 +35,7 @@ async function fixture(
   scores: Record<string, Record<string, number>>,
   options: {
     k?: number;
-    candidatePoolSize?: number;
+    rerankPoolSize?: number;
     decomposer?: QueryDecomposer;
     alpha?: number;
   } = {},
@@ -61,7 +61,7 @@ async function fixture(
     decomposer,
     reranker,
     k: options.k ?? 3,
-    candidatePoolSize: options.candidatePoolSize,
+    rerankPoolSize: options.rerankPoolSize,
     alpha: options.alpha,
   });
   return { index, rerankCalls, retriever };
@@ -302,13 +302,36 @@ describe("paper-style multi-query retrieval", () => {
     await expect(retriever.retrieve("request")).rejects.toThrow("Reranker returned invalid scores");
   });
 
-  test("limits each reranking pool to candidatePoolSize", async () => {
+  test("rerankPoolSize bounds every reranker call", async () => {
+    const originals = [tool("alpha"), tool("beta"), tool("gamma"), tool("delta")];
+    const index = new ToolIndex({ embedder: constantEmbedder });
+    await index.add(originals);
+    const rerankCallSizes: number[] = [];
+    const retriever = new MultiQueryRetriever({
+      index,
+      decomposer: { decompose: () => ["first", "second"] },
+      reranker: {
+        async rerank(_query, candidates) {
+          rerankCallSizes.push(candidates.length);
+          return candidates.map(() => 1);
+        },
+      },
+      k: 2,
+      rerankPoolSize: 2,
+    });
+
+    await retriever.retrieve("request");
+
+    expect(rerankCallSizes).toEqual([2, 2]);
+  });
+
+  test("limits each reranking pool to rerankPoolSize", async () => {
     const originals = [tool("alpha"), tool("beta"), tool("gamma"), tool("delta")];
     const { rerankCalls, retriever } = await fixture(
       originals,
       ["step"],
       { step: { alpha: 4, beta: 3, gamma: 2, delta: 1 } },
-      { k: 2, candidatePoolSize: 3 },
+      { k: 2, rerankPoolSize: 3 },
     );
 
     await retriever.retrieve("request");
@@ -411,7 +434,7 @@ describe("paper-style multi-query retrieval", () => {
         },
       },
       k: 1,
-      candidatePoolSize: 2,
+      rerankPoolSize: 2,
       alpha,
     });
 
