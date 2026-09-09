@@ -265,9 +265,20 @@ export class MultiQueryRetriever<T = unknown> {
       policy: overrides.policy ?? this.options.policy,
     };
     const catalog = this.options.index.backend.list();
+    const seenToolIds = new Set<string>();
+    const duplicateToolIds = new Set<string>();
+    for (const record of catalog) {
+      if (seenToolIds.has(record.tool.id)) duplicateToolIds.add(record.tool.id);
+      seenToolIds.add(record.tool.id);
+    }
+    if (duplicateToolIds.size > 0) {
+      throw new Error(
+        `Duplicate tool IDs in retrieval catalog: ${[...duplicateToolIds].sort().join(", ")}`,
+      );
+    }
     const records = await filterRecords(catalog, filters);
     const steps: MultiQueryStepTrace[] = [];
-    const recordById = new Map(catalog.map((record) => [record.tool.id, record]));
+    const recordById = new Map(records.map((record) => [record.tool.id, record]));
 
     for (let stepIndex = 0; stepIndex < decomposition.length; stepIndex++) {
       const stepQuery = decomposition[stepIndex]!;

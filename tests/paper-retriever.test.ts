@@ -200,6 +200,71 @@ describe("paper-style multi-query retrieval", () => {
     expect(result.tools[1]).toBe(originals[1]);
   });
 
+  test("rejects duplicate canonical tool ids before policy filtering or ranking", async () => {
+    const allowedOriginal = tool("allowed");
+    const deniedOriginal = tool("denied");
+    const records: IndexedTool[] = [
+      {
+        tool: {
+          id: "shared-id",
+          name: allowedOriginal.name,
+          description: allowedOriginal.description,
+          inputSchema: {},
+          tags: [],
+          original: allowedOriginal,
+        },
+        vector: [1],
+        text: allowedOriginal.description,
+      },
+      {
+        tool: {
+          id: "shared-id",
+          name: deniedOriginal.name,
+          description: deniedOriginal.description,
+          inputSchema: {},
+          tags: [],
+          original: deniedOriginal,
+        },
+        vector: [1],
+        text: deniedOriginal.description,
+      },
+    ];
+    const backend: VectorBackend = {
+      size: records.length,
+      upsert() {},
+      remove() {},
+      clear() {},
+      list: () => records,
+    };
+    const index = new ToolIndex({ backend, embedder: constantEmbedder });
+    const policyCalls: string[] = [];
+    const rerankCalls: string[][] = [];
+    const retriever = new MultiQueryRetriever<TestTool>({
+      index,
+      decomposer: { decompose: () => ["step"] },
+      reranker: {
+        async rerank(_query, candidates) {
+          rerankCalls.push(candidates.map((candidate) => candidate.name));
+          return candidates.map(() => 1);
+        },
+      },
+      policy: (candidate) => {
+        policyCalls.push(candidate.name);
+        return candidate.name === "allowed";
+      },
+      k: 1,
+    });
+
+    await expect(async () => {
+      const result = await retriever.retrieve("request");
+      throw new Error(
+        `identity confusion: traced ${result.trace.selected[0]?.name} but returned ${result.tools[0]?.name}`,
+      );
+    }).toThrow("Duplicate tool IDs in retrieval catalog: shared-id");
+    expect(policyCalls).toEqual([]);
+    expect(rerankCalls).toEqual([]);
+  });
+
   test("breaks equal-score ties by step order, rank, then tool id", async () => {
     const originals = [tool("alpha"), tool("beta"), tool("gamma"), tool("delta")];
     const { retriever } = await fixture(originals, ["s1", "s2"], {
