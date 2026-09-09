@@ -20,6 +20,7 @@ interface RawTool {
   description: string;
   inputSchema: Record<string, unknown>;
   execute?: () => string;
+  tags?: string[];
   namespace?: string;
 }
 
@@ -460,14 +461,16 @@ describe("paper-inspired tool merger", () => {
     });
   });
 
-  test("preserves legitimate schema properties named code and execute", async () => {
+  test("preserves legitimate schema properties named code, execute, tags, and namespace", async () => {
     const inputSchema = {
       type: "object",
       properties: {
         code: { type: "string" },
         execute: { type: "boolean" },
+        tags: { type: "array", items: { type: "string" } },
+        namespace: { type: "string" },
       },
-      required: ["code", "execute"],
+      required: ["code", "execute", "namespace", "tags"],
     };
     const result = await new ToolMerger({
       embedder: embedder([[1, 0]]),
@@ -518,6 +521,80 @@ describe("paper-inspired tool merger", () => {
     }).merge([tool]);
 
     expect(result.merged[0]?.inputSchema).toEqual(tool.inputSchema);
+  });
+
+  test.each([
+    { field: "tags", extra: { tags: ["allow"] } },
+    { field: "namespace", extra: { namespace: "untrusted" } },
+    { field: "arbitrary metadata", extra: { policy: "allow" } },
+  ])("rejects synthesized $field instead of accepting policy metadata", async ({ extra }) => {
+    const merger = new ToolMerger({
+      embedder: embedder([[1, 0]]),
+      classifier: classifier(),
+      synthesizer: {
+        synthesize: async (representative) =>
+          ({
+            description: "Advisory description",
+            inputSchema: representative.inputSchema,
+            ...extra,
+          }) as never,
+      },
+    });
+
+    await expect(
+      merger.merge([{ ...raw("safe"), tags: ["deny"], namespace: "trusted" }]),
+    ).rejects.toThrow(/descriptor/i);
+  });
+
+  test("uses the sorted union of every cluster member's trusted tags", async () => {
+    const result = await new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: classifier(),
+      similarityThreshold: 0,
+    }).merge([
+      { ...raw("a"), tags: ["public", "zeta"] },
+      { ...raw("b"), tags: ["deny", "public"] },
+      { ...raw("c"), tags: ["security"] },
+    ]);
+
+    expect(result.merged[0]?.tags).toEqual(["deny", "public", "security", "zeta"]);
+  });
+
+  test("preserves a namespace shared by every cluster member", async () => {
+    const result = await new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: classifier(),
+      similarityThreshold: 0,
+    }).merge([
+      { ...raw("a"), namespace: "trusted" },
+      { ...raw("b"), namespace: "trusted" },
+    ]);
+
+    expect(result.merged[0]?.namespace).toBe("trusted");
+  });
+
+  test("omits namespace when explicitly merging members from different namespaces", async () => {
+    const result = await new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: classifier(),
+      allowCrossNamespaceCandidates: true,
+      similarityThreshold: 0,
+    }).merge([
+      { ...raw("a"), namespace: "one" },
+      { ...raw("b"), namespace: "two" },
+    ]);
+
+    expect(result.merged[0]).not.toHaveProperty("namespace");
   });
 
   test("rejects synthesized executable values nested in descriptor data", async () => {
@@ -628,5 +705,21 @@ describe("paper prompt builders", () => {
       expect(prompt).not.toMatch(/chain[- ]of[- ]thought|show your work|step by step/i);
       expect(prompt).not.toMatch(/OpenAI|Anthropic|Gemini/);
     }
+  });
+
+  test("does not ask the synthesizer to produce trusted policy metadata", () => {
+    const canonical = {
+      id: "id",
+      name: "search",
+      description: "Search records",
+      inputSchema: { type: "object" },
+      tags: ["security"],
+      namespace: "trusted",
+      original: raw("search"),
+    } satisfies CanonicalTool<RawTool>;
+
+    const prompt = buildDescriptorSynthesisPrompt(canonical, [canonical]);
+
+    expect(prompt.match(/JSON shape:.*$/m)?.[0]).not.toMatch(/tags|namespace/);
   });
 });

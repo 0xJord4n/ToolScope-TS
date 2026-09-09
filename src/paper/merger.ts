@@ -32,8 +32,6 @@ export interface ClusterValidator {
 export interface SynthesizedDescriptor {
   description: string;
   inputSchema: JsonSchema;
-  tags?: string[];
-  namespace?: string;
 }
 
 export interface DescriptorSynthesizer {
@@ -265,14 +263,6 @@ function representative<T>(cluster: readonly CanonicalTool<T>[]): CanonicalTool<
   )[0]!;
 }
 
-const forbiddenDescriptorKeys = new Set([
-  "code",
-  "execute",
-  "handler",
-  "implementation",
-  "function",
-]);
-
 function assertJsonSafe(value: unknown, context: string, seen = new Set<object>()): void {
   if (
     value === null ||
@@ -349,9 +339,10 @@ function consolidateSchemas<T>(cluster: readonly CanonicalTool<T>[]): JsonSchema
 
 function validateSynthesizedDescriptor(output: unknown): SynthesizedDescriptor {
   if (!isRecord(output)) throw new TypeError("Invalid synthesized descriptor: expected an object");
+  const supportedDescriptorKeys = new Set(["description", "inputSchema"]);
   for (const key of Object.keys(output)) {
-    if (forbiddenDescriptorKeys.has(key.toLowerCase())) {
-      throw new TypeError(`Invalid synthesized descriptor: executable field ${key} is forbidden`);
+    if (!supportedDescriptorKeys.has(key)) {
+      throw new TypeError(`Invalid synthesized descriptor: unsupported field ${key}`);
     }
   }
   if (typeof output.description !== "string" || output.description.trim().length === 0) {
@@ -359,23 +350,9 @@ function validateSynthesizedDescriptor(output: unknown): SynthesizedDescriptor {
   }
   validateObjectSchema(output.inputSchema, "synthesized descriptor schema");
   assertJsonSafe(output, "synthesized descriptor");
-  if (
-    output.tags !== undefined &&
-    (!Array.isArray(output.tags) || !output.tags.every((tag) => typeof tag === "string"))
-  ) {
-    throw new TypeError("Invalid synthesized descriptor: tags must contain only strings");
-  }
-  if (
-    output.namespace !== undefined &&
-    (typeof output.namespace !== "string" || output.namespace.length === 0)
-  ) {
-    throw new TypeError("Invalid synthesized descriptor: namespace must be a non-empty string");
-  }
   return {
     description: output.description,
     inputSchema: output.inputSchema,
-    ...(output.tags === undefined ? {} : { tags: [...output.tags] as string[] }),
-    ...(output.namespace === undefined ? {} : { namespace: output.namespace }),
   };
 }
 
@@ -519,11 +496,13 @@ export class ToolMerger {
         : {
             description: selected.description,
             inputSchema: consolidatedSchema,
-            tags: selected.tags,
-            ...(selected.namespace === undefined ? {} : { namespace: selected.namespace }),
           };
-      const tags = synthesized.tags ?? selected.tags;
-      const namespace = synthesized.namespace ?? selected.namespace;
+      const tags = [...new Set(cluster.flatMap((tool) => tool.tags))].sort((a, b) =>
+        a.localeCompare(b),
+      );
+      const namespace = cluster.every((tool) => tool.namespace === cluster[0]!.namespace)
+        ? cluster[0]!.namespace
+        : undefined;
       const id = fingerprintTool(
         selected.name,
         synthesized.description,

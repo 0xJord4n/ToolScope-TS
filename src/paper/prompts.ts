@@ -40,7 +40,7 @@ export function buildDescriptorSynthesisPrompt(
   return [
     "Synthesize prompt-facing descriptor data for this merge cluster. The name is fixed by the representative and must not be returned.",
     safety,
-    'JSON shape: {"description": string, "inputSchema": object, "tags"?: string[], "namespace"?: string}. Keep all text concise.',
+    'JSON shape: {"description": string, "inputSchema": object}. Keep all text concise.',
     `Representative: ${JSON.stringify(toolView(representative))}`,
     `Members: ${JSON.stringify(members.map(toolView))}`,
   ].join("\n");
