@@ -142,7 +142,35 @@ function cosine(left: number[], right: number[]): number {
     leftMagnitude += leftValue * leftValue;
     rightMagnitude += rightValue * rightValue;
   }
-  return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude) || 1);
+  if (!Number.isFinite(dot)) throw new Error("Embedding dot product must be finite");
+  if (!Number.isFinite(leftMagnitude)) {
+    throw new Error("Query embedding vector must have a finite norm");
+  }
+  if (!Number.isFinite(rightMagnitude)) {
+    throw new Error("Stored embedding vector must have a finite norm");
+  }
+  if (leftMagnitude === 0) {
+    throw new Error("Query embedding vector must have a non-zero norm");
+  }
+  if (rightMagnitude === 0) {
+    throw new Error("Stored embedding vector must have a non-zero norm");
+  }
+  const score = dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
+  if (!Number.isFinite(score)) throw new Error("Cosine similarity score must be finite");
+  return score;
+}
+
+function validateQueryVector(vector: number[]): void {
+  if (vector.length === 0 || vector.some((value) => !Number.isFinite(value))) {
+    throw new Error("Embedding vectors must contain only finite numbers");
+  }
+  const magnitude = vector.reduce((total, value) => total + value * value, 0);
+  if (!Number.isFinite(magnitude)) {
+    throw new Error("Query embedding vector must have a finite norm");
+  }
+  if (magnitude === 0) {
+    throw new Error("Query embedding vector must have a non-zero norm");
+  }
 }
 
 function validateConfiguration(
@@ -248,9 +276,7 @@ export class MultiQueryRetriever<T = unknown> {
         throw new Error("Embedder returned the wrong vector count");
       }
       const queryVector = vectors[0];
-      if (queryVector.length === 0 || queryVector.some((value) => !Number.isFinite(value))) {
-        throw new Error("Embedding vectors must contain only finite numbers");
-      }
+      validateQueryVector(queryVector);
       const sparseScores = bm25Scores(
         stepQuery,
         records.map((record) => record.text),

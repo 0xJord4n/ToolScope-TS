@@ -67,6 +67,43 @@ async function fixture(
   return { index, rerankCalls, retriever };
 }
 
+function vectorFixture(
+  queryVector: number[],
+  storedVector?: number[],
+): MultiQueryRetriever<TestTool> {
+  const original = tool("candidate");
+  const records: IndexedTool[] = storedVector
+    ? [
+        {
+          tool: {
+            id: "candidate-id",
+            name: original.name,
+            description: original.description,
+            inputSchema: {},
+            tags: [],
+            original,
+          },
+          vector: storedVector,
+          text: original.description,
+        },
+      ]
+    : [];
+  const backend: VectorBackend = {
+    size: records.length,
+    upsert() {},
+    remove() {},
+    clear() {},
+    list: () => records,
+  };
+  const index = new ToolIndex({ backend, embedder: { embed: async () => [queryVector] } });
+  return new MultiQueryRetriever({
+    index,
+    decomposer: { decompose: () => ["step"] },
+    reranker: { rerank: async (_query, candidates) => candidates.map(() => 1) },
+    k: 1,
+  });
+}
+
 describe("paper-style multi-query retrieval", () => {
   test("decomposes the original query and retrieves steps in order", async () => {
     const originals = [tool("alpha"), tool("beta")];
@@ -432,6 +469,30 @@ describe("paper-style multi-query retrieval", () => {
 
     await expect(retriever.retrieve("request")).rejects.toThrow(
       "Embedding vectors must contain only finite numbers",
+    );
+  });
+
+  test("rejects a zero-norm stored vector", async () => {
+    const retriever = vectorFixture([1, 0], [0, 0]);
+
+    await expect(retriever.retrieve("request")).rejects.toThrow(
+      "Stored embedding vector must have a non-zero norm",
+    );
+  });
+
+  test("rejects a zero-norm query embedding before catalog scoring", async () => {
+    const retriever = vectorFixture([0, 0]);
+
+    await expect(retriever.retrieve("request")).rejects.toThrow(
+      "Query embedding vector must have a non-zero norm",
+    );
+  });
+
+  test("rejects finite vector components when cosine arithmetic overflows", async () => {
+    const retriever = vectorFixture([1e154], [1e155]);
+
+    await expect(retriever.retrieve("request")).rejects.toThrow(
+      "Embedding dot product must be finite",
     );
   });
 });
