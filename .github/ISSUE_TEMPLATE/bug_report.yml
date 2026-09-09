@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting a problem. For vulnerabilities, stop here and use private vulnerability reporting from SECURITY.md.
+        Thanks for reporting a problem. For vulnerabilities, stop here and follow the [private reporting instructions](https://github.com/0xJord4n/ToolScope-TS/security/policy).
   - type: checkboxes
     attributes:
       label: Before submitting

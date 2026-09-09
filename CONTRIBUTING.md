@@ -12,41 +12,54 @@ Contributions are welcome. Bug fixes, framework compatibility improvements, new 
 
 ToolScope TS uses Bun for dependency management, tests, formatting, linting, and builds.
 
-```bash
-git clone https://github.com/0xJord4n/ToolScope-TS.git
-cd ToolScope-TS
-bun install
-bun run check
-bun run package:check
-```
+1. Fork the repository on GitHub, then clone your fork and add the upstream repository:
+
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/ToolScope-TS.git
+   cd ToolScope-TS
+   git remote add upstream https://github.com/0xJord4n/ToolScope-TS.git
+   ```
+
+2. Install dependencies and verify the baseline:
+
+   ```bash
+   bun install
+   bun run check
+   bun run package:check
+   ```
 
 The repository currently validates against Bun 1.3.x. Use a current Bun release when developing locally.
 
 ## Making a change
 
-1. Fork the repository.
-2. Create a focused branch from `main`:
+1. Update `main` from upstream and create a focused branch:
 
    ```bash
+   git checkout main
+   git pull --ff-only upstream main
    git checkout -b fix/short-description
    ```
 
-3. Make the smallest coherent change that solves the problem.
-4. Add or update tests for behavior changes and bug fixes.
-5. Update examples or public documentation when an API changes.
-6. Run the complete verification suite:
+2. Make the smallest coherent change that solves the problem.
+3. Add or update tests for behavior changes and bug fixes.
+4. Update examples or public documentation when an API changes.
+5. Run the complete verification suite:
 
    ```bash
    bun run check
    bun run package:check
    ```
 
-7. Submit a pull request with a clear summary and test plan.
+6. Push the branch to your fork and submit a pull request with a clear summary and test plan:
+
+   ```bash
+   git push -u origin fix/short-description
+   ```
 
 ## Code standards
 
 - Keep the package strict and type-safe.
-- Preserve original executable tool objects through normalization and selection.
+- Preserve original executable tool objects through normalization and in-memory selection; persistent backends must clearly return descriptors.
 - Treat tags, namespaces, annotations, metadata, and executable identity as security-sensitive during synchronization.
 - Validate malformed vectors, scores, provider responses, and persistent data fail-closed.
 - Keep framework packages optional unless the core runtime directly depends on them.

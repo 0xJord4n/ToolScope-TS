@@ -10,7 +10,7 @@
 
 **Semantic tool retrieval for TypeScript agents, powered by Bun.**
 
-ToolScope TS selects the most relevant tools for each prompt before the model runs. It keeps large tool catalogs out of the context window while preserving the original executable tool objects and their normal calling behavior.
+ToolScope TS selects the most relevant tools for each prompt before the model runs. It keeps large tool catalogs out of the context window while preserving original executable tool objects when using the default in-memory backend.
 
 Built for [LangGraph.js](https://github.com/langchain-ai/langgraphjs), the [Vercel AI SDK](https://ai-sdk.dev/), and the [Model Context Protocol](https://modelcontextprotocol.io/).
 
@@ -30,7 +30,7 @@ It is a selector—not an agent, proxy, executor, or meta-tool.
 ## Highlights
 
 - **Framework-native** — accepts MCP, OpenAI-style, LangChain/LangGraph, and Vercel AI tools
-- **Original object identity** — returns executable tool objects instead of reconstructed wrappers
+- **Original object identity in memory** — the default backend returns executable tool objects instead of reconstructed wrappers
 - **Flexible retrieval** — semantic + lexical scoring, custom rerankers, thresholds, and MMR diversity
 - **Policy-aware** — allow/deny tags, namespaces, async callbacks, and metadata-safe synchronization
 - **Multi-turn ready** — bounded sticky toolsets reduce unnecessary selection churn
@@ -202,7 +202,7 @@ const toolIndex = new ToolIndex({ embedder, backend });
 await toolIndex.sync(tools);
 ```
 
-In-memory indexes return original tool values by identity. SQLite stores JSON-safe descriptors, so executable function closures should be supplied again by the application rather than treated as persistent data.
+In-memory indexes return original tool values by identity. SQLite stores and returns JSON-safe descriptors only; map selected descriptor IDs or names back to trusted runtime implementations before execution.
 
 ## Observability and privacy
 
@@ -229,7 +229,7 @@ Raw prompts may contain sensitive information. Redact or avoid persisting query 
 | `toolscope-ts/adapters/mcp`       | MCP catalog synchronization and selection                             |
 | `toolscope-ts/backends/sqlite`    | Bun SQLite persistence                                                |
 
-The package ships ESM JavaScript and TypeScript declarations. Framework integrations are optional peer dependencies; install only the adapters your application uses.
+The package ships ESM JavaScript and TypeScript declarations. Framework adapters are package subpath exports; install the corresponding optional peer dependencies only for the integrations your application uses.
 
 ## Examples
 
