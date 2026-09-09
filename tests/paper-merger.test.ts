@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   MergeManifest,
   PAPER_2026_DEFAULTS,
+  PAPER_2026_MERGER_RESOURCE_DEFAULTS,
   ToolMerger,
   type ClusterValidator,
   type DescriptorSynthesizer,
@@ -46,6 +47,277 @@ const classifier = (
 });
 
 describe("paper-inspired tool merger", () => {
+  test("exports separate immutable resource defaults without changing paper defaults", () => {
+    expect(PAPER_2026_DEFAULTS).toEqual({
+      candidateNeighbors: 30,
+      candidateThreshold: 0.82,
+      autoCorrectionPasses: 1,
+    });
+    expect(PAPER_2026_MERGER_RESOURCE_DEFAULTS).toEqual({
+      modelConcurrency: 8,
+      maxCatalogSize: 1000,
+      maxEmbeddingDimensions: 4096,
+      maxDescriptorChars: 16384,
+      maxClassifierCalls: 30000,
+    });
+    expect(Object.isFrozen(PAPER_2026_MERGER_RESOURCE_DEFAULTS)).toBe(true);
+  });
+
+  test.each([
+    ["candidateCount", Number.MAX_SAFE_INTEGER + 1],
+    ["autoCorrectionPasses", Number.MAX_SAFE_INTEGER + 1],
+    ["modelConcurrency", 0],
+    ["modelConcurrency", 1.5],
+    ["maxCatalogSize", 0],
+    ["maxEmbeddingDimensions", Number.MAX_SAFE_INTEGER + 1],
+    ["maxDescriptorChars", -1],
+    ["maxClassifierCalls", -1],
+  ] as const)("rejects unsafe integer option %s=%s", (name, value) => {
+    expect(
+      () =>
+        new ToolMerger({
+          embedder: embedder([]),
+          classifier: classifier(),
+          [name]: value,
+        }),
+    ).toThrow(name);
+  });
+
+  test.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects unsafe text.truncate=%s",
+    (truncate) => {
+      expect(
+        () =>
+          new ToolMerger({
+            embedder: embedder([]),
+            classifier: classifier(),
+            text: { truncate },
+          }),
+      ).toThrow("text.truncate");
+    },
+  );
+
+  test("rejects an oversized catalog before normalization or provider calls", async () => {
+    let getterCalls = 0;
+    let embedCalls = 0;
+    const oversized = Object.defineProperty({}, "name", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "unsafe";
+      },
+    });
+    const merger = new ToolMerger({
+      embedder: { embed: async () => (++embedCalls, []) },
+      classifier: classifier(),
+      maxCatalogSize: 1,
+    });
+
+    await expect(merger.merge([oversized, oversized])).rejects.toThrow("maxCatalogSize");
+    expect(getterCalls).toBe(0);
+    expect(embedCalls).toBe(0);
+  });
+
+  test("rejects an oversized canonical descriptor before preprocessors or providers", async () => {
+    let preprocessorCalls = 0;
+    let embedCalls = 0;
+    let classifierCalls = 0;
+    let validatorCalls = 0;
+    let synthesizerCalls = 0;
+    const merger = new ToolMerger({
+      embedder: { embed: async () => (++embedCalls, [[1]]) },
+      classifier: { classify: async () => (++classifierCalls, { similar: true }) },
+      validator: { validate: async () => (++validatorCalls, { merge: true }) },
+      synthesizer: {
+        synthesize: async () => (++synthesizerCalls, { description: "synthesized" }),
+      },
+      maxDescriptorChars: 256,
+      text: { preprocessors: [(text) => (++preprocessorCalls, text)] },
+    });
+    const tool = {
+      ...raw("a", "b"),
+      inputSchema: {
+        type: "object",
+        properties: { payload: { type: "string", description: "x".repeat(512) } },
+      },
+    };
+
+    await expect(merger.merge([tool])).rejects.toThrow("maxDescriptorChars");
+    expect(preprocessorCalls).toBe(0);
+    expect(embedCalls).toBe(0);
+    expect(classifierCalls).toBe(0);
+    expect(validatorCalls).toBe(0);
+    expect(synthesizerCalls).toBe(0);
+  });
+
+  test("rejects embedding text expanded by a preprocessor before the embedder", async () => {
+    let preprocessorCalls = 0;
+    let embedCalls = 0;
+    const merger = new ToolMerger({
+      embedder: { embed: async () => (++embedCalls, [[1]]) },
+      classifier: classifier(),
+      maxDescriptorChars: 256,
+      text: {
+        truncate: 256,
+        preprocessors: [() => (++preprocessorCalls, "x".repeat(257))],
+      },
+    });
+
+    await expect(merger.merge([raw("a")])).rejects.toThrow("maxDescriptorChars");
+    expect(preprocessorCalls).toBe(1);
+    expect(embedCalls).toBe(0);
+  });
+
+  test("rejects an oversized synthesized description", async () => {
+    let synthesizerCalls = 0;
+    const merger = new ToolMerger({
+      embedder: embedder([[1]]),
+      classifier: classifier(),
+      synthesizer: {
+        synthesize: async () => (++synthesizerCalls, { description: "x".repeat(257) }),
+      },
+      maxDescriptorChars: 256,
+    });
+
+    await expect(merger.merge([raw("a")])).rejects.toThrow("maxDescriptorChars");
+    expect(synthesizerCalls).toBe(1);
+  });
+
+  test("rejects excessive embedding dimensions before classifier calls", async () => {
+    let classifierCalls = 0;
+    const merger = new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: { classify: async () => (++classifierCalls, { similar: true }) },
+      maxEmbeddingDimensions: 1,
+      similarityThreshold: 0,
+    });
+
+    await expect(merger.merge([raw("a"), raw("b")])).rejects.toThrow("maxEmbeddingDimensions");
+    expect(classifierCalls).toBe(0);
+  });
+
+  test("fails closed on classifier-call budget before invoking the classifier", async () => {
+    let calls = 0;
+    const merger = new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: { classify: async () => (++calls, { similar: true }) },
+      similarityThreshold: 0,
+      maxClassifierCalls: 2,
+    });
+
+    await expect(merger.merge([raw("a"), raw("b"), raw("c")])).rejects.toThrow(
+      "maxClassifierCalls",
+    );
+    expect(calls).toBe(0);
+  });
+
+  test("bounds classifier concurrency and reports failures in candidate order", async () => {
+    let active = 0;
+    let peak = 0;
+    const merger = new ToolMerger({
+      embedder: embedder(Array.from({ length: 4 }, () => [1, 0])),
+      classifier: {
+        async classify(left, right) {
+          active += 1;
+          peak = Math.max(peak, active);
+          const pair = `${left.name}:${right.name}`;
+          await Bun.sleep(pair === "a:b" ? 20 : 1);
+          active -= 1;
+          if (pair === "a:b" || pair === "a:c") throw new Error(pair);
+          return { similar: false };
+        },
+      },
+      similarityThreshold: 0,
+      modelConcurrency: 2,
+    });
+
+    await expect(merger.merge([raw("a"), raw("b"), raw("c"), raw("d")])).rejects.toThrow("a:b");
+    expect(peak).toBe(2);
+  });
+
+  test("uses pass barriers with bounded ordered validator concurrency", async () => {
+    let active = 0;
+    let peak = 0;
+    const completedPassOne: string[] = [];
+    const calls: string[] = [];
+    const merger = new ToolMerger({
+      embedder: embedder(
+        Array.from({ length: 4 }, (_value, index) => [index < 2 ? 1 : 0, index < 2 ? 0 : 1]),
+      ),
+      classifier: classifier((left, right) => left.name[0] === right.name[0]),
+      similarityThreshold: 0.5,
+      autoCorrectionPasses: 2,
+      modelConcurrency: 2,
+      validator: {
+        async validate(cluster) {
+          const key = cluster.map((item) => item.name).join("");
+          const pass = calls.filter((value) => value === key).length + 1;
+          calls.push(key);
+          if (pass === 2 && completedPassOne.length !== 2) throw new Error("missing pass barrier");
+          active += 1;
+          peak = Math.max(peak, active);
+          await Bun.sleep(key === "ab" ? 10 : 1);
+          active -= 1;
+          if (pass === 1) completedPassOne.push(key);
+          return { merge: true };
+        },
+      },
+    });
+
+    await merger.merge([raw("a1"), raw("a2"), raw("b1"), raw("b2")]);
+    expect(calls).toEqual(["a1a2", "b1b2", "a1a2", "b1b2"]);
+    expect(peak).toBe(2);
+  });
+
+  test("bounds synthesizer concurrency while preserving component order", async () => {
+    let active = 0;
+    let peak = 0;
+    const merger = new ToolMerger({
+      embedder: embedder(Array.from({ length: 4 }, (_value, index) => [index + 1, 1])),
+      classifier: classifier(() => false),
+      similarityThreshold: -1,
+      modelConcurrency: 2,
+      synthesizer: {
+        async synthesize(representative) {
+          active += 1;
+          peak = Math.max(peak, active);
+          await Bun.sleep(representative.name === "a" ? 15 : 1);
+          active -= 1;
+          return { description: `made-${representative.name}` };
+        },
+      },
+    });
+
+    const result = await merger.merge([raw("a"), raw("b"), raw("c"), raw("d")]);
+    expect(peak).toBe(2);
+    expect(result.merged.map((item) => item.description)).toEqual([
+      "made-a",
+      "made-b",
+      "made-c",
+      "made-d",
+    ]);
+  });
+
+  test("bounded top-k candidate generation preserves exhaustive tie semantics", async () => {
+    const result = await new ToolMerger({
+      embedder: embedder(Array.from({ length: 5 }, () => [1, 0])),
+      classifier: classifier(() => false),
+      similarityThreshold: 0,
+      candidateCount: 1,
+    }).merge([raw("a"), raw("b"), raw("c"), raw("d"), raw("e")]);
+
+    const names = result.candidatePairs.map(({ ids }) =>
+      ids.map((id) => result.originals.find((item) => item.id === id)!.name).join(":"),
+    );
+    expect(names).toEqual(["a:b", "a:c", "a:d", "a:e"]);
+  });
   test("generates deterministic top-neighbor candidate pairs above the threshold", async () => {
     const calls: string[] = [];
     const tools = [raw("alpha"), raw("beta"), raw("gamma")];
@@ -435,6 +707,7 @@ describe("paper-inspired tool merger", () => {
         shared: { type: "string" },
       },
       required: ["shared"],
+      anyOf: [first.inputSchema, second.inputSchema],
     });
   });
 
@@ -458,8 +731,154 @@ describe("paper-inspired tool merger", () => {
       type: "object",
       properties: { value: { anyOf: [{ type: "number" }, { type: "string" }] } },
       required: [],
+      anyOf: [tools[1]!.inputSchema, tools[0]!.inputSchema],
     });
   });
+
+  test("preserves a singleton's complete JSON Schema", async () => {
+    const inputSchema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $id: "https://example.test/schemas/search.json",
+      title: "Search input",
+      description: "A fully constrained search request",
+      type: "object",
+      properties: {
+        query: { $ref: "#/$defs/nonEmptyString", description: "Search terms" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+      minProperties: 1,
+      allOf: [{ propertyNames: { pattern: "^[a-z]+$" } }],
+      $defs: {
+        nonEmptyString: { type: "string", minLength: 1 },
+      },
+      definitions: {
+        legacyString: { type: "string" },
+      },
+      examples: [{ query: "papers" }],
+      deprecated: false,
+    };
+    const result = await new ToolMerger({
+      embedder: embedder([[1, 0]]),
+      classifier: classifier(),
+    }).merge([{ ...raw("search"), inputSchema }]);
+
+    expect(result.merged[0]?.inputSchema).toEqual(inputSchema);
+  });
+
+  test("preserves complete member schemas in deterministic deduplicated anyOf branches", async () => {
+    const stringSchema = {
+      type: "object",
+      title: "String lookup",
+      properties: { shared: { type: "string" }, query: { type: "string", minLength: 2 } },
+      required: ["shared", "query"],
+      additionalProperties: false,
+    };
+    const numericSchema = {
+      type: "object",
+      title: "Numeric lookup",
+      properties: { shared: { type: "string" }, limit: { type: "integer", minimum: 1 } },
+      required: ["shared", "limit"],
+      maxProperties: 2,
+    };
+    const tools = [
+      { ...raw("string-copy"), inputSchema: stringSchema },
+      { ...raw("numeric"), inputSchema: numericSchema },
+      { ...raw("string"), inputSchema: stringSchema },
+    ];
+    const result = await new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: classifier(),
+      similarityThreshold: 0,
+    }).merge(tools);
+
+    expect(result.merged[0]?.inputSchema).toEqual({
+      type: "object",
+      properties: {
+        limit: { type: "integer", minimum: 1 },
+        query: { type: "string", minLength: 2 },
+        shared: { type: "string" },
+      },
+      required: ["shared"],
+      anyOf: [numericSchema, stringSchema],
+    });
+  });
+
+  test("hoists compatible local definition targets so member references remain resolvable", async () => {
+    const sharedDefinition = { type: "string", minLength: 1 };
+    const tools = [
+      {
+        ...raw("modern"),
+        inputSchema: {
+          type: "object",
+          properties: { modern: { $ref: "#/$defs/shared" } },
+          $defs: { shared: sharedDefinition },
+        },
+      },
+      {
+        ...raw("legacy"),
+        inputSchema: {
+          type: "object",
+          properties: { legacy: { $ref: "#/definitions/shared" } },
+          definitions: { shared: sharedDefinition },
+        },
+      },
+      {
+        ...raw("modern-copy"),
+        inputSchema: {
+          type: "object",
+          properties: { other: { $ref: "#/$defs/shared" } },
+          $defs: { shared: { minLength: 1, type: "string" } },
+        },
+      },
+    ];
+    const result = await new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: classifier(),
+      similarityThreshold: 0,
+    }).merge(tools);
+
+    expect(result.merged[0]?.inputSchema).toMatchObject({
+      $defs: { shared: sharedDefinition },
+      definitions: { shared: sharedDefinition },
+    });
+  });
+
+  test.each(["$defs", "definitions"] as const)(
+    "fails closed when member schemas have conflicting same-name %s",
+    async (keyword) => {
+      const merger = new ToolMerger({
+        embedder: embedder([
+          [1, 0],
+          [1, 0],
+        ]),
+        classifier: classifier(),
+        similarityThreshold: 0,
+      });
+      const tools = [
+        {
+          ...raw("string"),
+          inputSchema: { type: "object", [keyword]: { shared: { type: "string" } } },
+        },
+        {
+          ...raw("number"),
+          inputSchema: { type: "object", [keyword]: { shared: { type: "number" } } },
+        },
+      ];
+
+      await expect(merger.merge(tools)).rejects.toThrow(
+        `Conflicting ${keyword} definition: shared`,
+      );
+    },
+  );
 
   test("preserves legitimate schema properties named code, execute, tags, and namespace", async () => {
     const inputSchema = {
@@ -500,8 +919,162 @@ describe("paper-inspired tool merger", () => {
     expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
   });
 
-  test("treats a synthesized schema as advisory and does not let it remove original parameters", async () => {
-    const tool = {
+  test.each([
+    { label: "Date values", value: () => new Date(0) },
+    { label: "Map values", value: () => new Map([["key", "value"]]) },
+    {
+      label: "class instances",
+      value: () =>
+        new (class UnsafeValue {
+          value = 1;
+        })(),
+    },
+    { label: "non-plain prototypes", value: () => Object.create({}) as object },
+    {
+      label: "accessors",
+      value: () => {
+        const value = {};
+        Object.defineProperty(value, "unsafe", { enumerable: true, get: () => "value" });
+        return value;
+      },
+    },
+    {
+      label: "inherited enumerable state",
+      value: () => Object.create({ inherited: "value" }) as object,
+    },
+    {
+      label: "symbol-keyed values",
+      value: () => ({ [Symbol("unsafe")]: "value" }),
+    },
+    {
+      label: "sparse arrays",
+      value: () => {
+        const value: unknown[] = [];
+        value.length = 1;
+        return value;
+      },
+    },
+    {
+      label: "cycles",
+      value: () => {
+        const value: Record<string, unknown> = {};
+        value.self = value;
+        return value;
+      },
+    },
+    { label: "NaN", value: () => Number.NaN },
+    { label: "positive infinity", value: () => Number.POSITIVE_INFINITY },
+    { label: "negative infinity", value: () => Number.NEGATIVE_INFINITY },
+  ])("rejects non-strict JSON member schema data: $label", async ({ value }) => {
+    const merger = new ToolMerger({ embedder: embedder([[1, 0]]), classifier: classifier() });
+
+    await expect(
+      merger.merge([
+        {
+          ...raw("unsafe"),
+          inputSchema: { type: "object", properties: { value: { default: value() } } },
+        },
+      ]),
+    ).rejects.toThrow(/strict JSON data/);
+  });
+
+  test("rejects schema accessors before fingerprinting without invoking them", async () => {
+    let getterCalls = 0;
+    const unsafe = {};
+    Object.defineProperty(unsafe, "value", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "unsafe";
+      },
+    });
+    const merger = new ToolMerger({ embedder: embedder([[1, 0]]), classifier: classifier() });
+
+    await expect(
+      merger.merge([
+        {
+          ...raw("unsafe-accessor"),
+          inputSchema: { type: "object", properties: { value: { default: unsafe } } },
+        },
+      ]),
+    ).rejects.toThrow(/strict JSON data/);
+    expect(getterCalls).toBe(0);
+  });
+
+  test("deep-detaches a singleton schema from its source", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: { query: { type: "string", examples: ["original"] } },
+      required: ["query"],
+      $defs: { shared: { type: "string", minLength: 1 } },
+    };
+    const result = await new ToolMerger({
+      embedder: embedder([[1, 0]]),
+      classifier: classifier(),
+    }).merge([{ ...raw("singleton"), inputSchema }]);
+    const mergedSchema = result.merged[0]!.inputSchema;
+
+    inputSchema.properties.query.examples[0] = "mutated";
+    inputSchema.$defs.shared.minLength = 99;
+
+    expect(mergedSchema).toEqual({
+      type: "object",
+      properties: { query: { type: "string", examples: ["original"] } },
+      required: ["query"],
+      $defs: { shared: { type: "string", minLength: 1 } },
+    });
+    expect(mergedSchema).not.toBe(inputSchema);
+  });
+
+  test("deep-detaches flattened and complete multi-member schemas from their sources", async () => {
+    const firstSchema = {
+      type: "object",
+      properties: { shared: { type: "string", examples: ["first"] } },
+      required: ["shared"],
+    };
+    const secondSchema = {
+      type: "object",
+      properties: { shared: { type: "string", examples: ["second"] } },
+      required: ["shared"],
+    };
+    const result = await new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: classifier(),
+      similarityThreshold: 0,
+    }).merge([
+      { ...raw("first"), inputSchema: firstSchema },
+      { ...raw("second"), inputSchema: secondSchema },
+    ]);
+    const mergedSchema = result.merged[0]!.inputSchema;
+
+    firstSchema.properties.shared.examples[0] = "mutated-first";
+    secondSchema.properties.shared.examples[0] = "mutated-second";
+
+    expect(mergedSchema).toEqual({
+      type: "object",
+      properties: {
+        shared: {
+          anyOf: [
+            { type: "string", examples: ["first"] },
+            { type: "string", examples: ["second"] },
+          ],
+        },
+      },
+      required: ["shared"],
+      anyOf: [firstSchema, secondSchema].map((schema, index) => ({
+        ...schema,
+        properties: {
+          shared: { type: "string", examples: [index === 0 ? "first" : "second"] },
+        },
+      })),
+    });
+  });
+
+  test("accepts exactly a synthesized description while keeping schema exclusively trusted", async () => {
+    const first = {
       ...raw("safe"),
       inputSchema: {
         type: "object",
@@ -509,33 +1082,50 @@ describe("paper-inspired tool merger", () => {
         required: ["requiredInput"],
       },
     };
-    const result = await new ToolMerger({
-      embedder: embedder([[1, 0]]),
-      classifier: classifier(),
-      synthesizer: {
-        synthesize: async () => ({
-          description: "Advisory descriptor",
-          inputSchema: { type: "object", properties: {} },
-        }),
+    const second = {
+      ...raw("safer"),
+      inputSchema: {
+        type: "object",
+        properties: { optionalInput: { type: "number" } },
       },
-    }).merge([tool]);
+    };
+    const result = await new ToolMerger({
+      embedder: embedder([
+        [1, 0],
+        [1, 0],
+      ]),
+      classifier: classifier(),
+      similarityThreshold: 0,
+      synthesizer: {
+        synthesize: async () => ({ description: "Synthesized description" }),
+      },
+    }).merge([first, second]);
 
-    expect(result.merged[0]?.inputSchema).toEqual(tool.inputSchema);
+    expect(result.merged[0]?.description).toBe("Synthesized description");
+    expect(result.merged[0]?.inputSchema).toEqual({
+      type: "object",
+      properties: {
+        optionalInput: { type: "number" },
+        requiredInput: { type: "string" },
+      },
+      required: [],
+      anyOf: [second.inputSchema, first.inputSchema],
+    });
   });
 
   test.each([
+    { field: "inputSchema", extra: { inputSchema: { type: "object" } } },
     { field: "tags", extra: { tags: ["allow"] } },
     { field: "namespace", extra: { namespace: "untrusted" } },
-    { field: "arbitrary metadata", extra: { policy: "allow" } },
-  ])("rejects synthesized $field instead of accepting policy metadata", async ({ extra }) => {
+    { field: "other top-level keys", extra: { policy: "allow" } },
+  ])("rejects synthesized $field", async ({ extra }) => {
     const merger = new ToolMerger({
       embedder: embedder([[1, 0]]),
       classifier: classifier(),
       synthesizer: {
-        synthesize: async (representative) =>
+        synthesize: async () =>
           ({
             description: "Advisory description",
-            inputSchema: representative.inputSchema,
             ...extra,
           }) as never,
       },
@@ -597,39 +1187,11 @@ describe("paper-inspired tool merger", () => {
     expect(result.merged[0]).not.toHaveProperty("namespace");
   });
 
-  test("rejects synthesized executable values nested in descriptor data", async () => {
-    const merger = new ToolMerger({
-      embedder: embedder([[1, 0]]),
-      classifier: classifier(),
-      synthesizer: {
-        synthesize: async () => ({
-          description: "unsafe",
-          inputSchema: { type: "object", properties: { value: { default: () => "code" } } },
-        }),
-      },
-    });
-
-    await expect(merger.merge([raw("unsafe")])).rejects.toThrow(/descriptor/i);
-  });
-
-  test("rejects unsupported non-object synthesized schemas", async () => {
-    const merger = new ToolMerger({
-      embedder: embedder([[1, 0]]),
-      classifier: classifier(),
-      synthesizer: {
-        synthesize: async () => ({ description: "invalid", inputSchema: { type: "string" } }),
-      },
-    });
-
-    await expect(merger.merge([raw("invalid")])).rejects.toThrow(/descriptor/i);
-  });
-
   test("rejects synthesized executable code", async () => {
     const synth: DescriptorSynthesizer = {
-      async synthesize(representative) {
+      async synthesize() {
         return {
           description: "Unsafe descriptor",
-          inputSchema: representative.inputSchema,
           tags: ["unsafe"],
           implementation: "return dangerous()",
         } as never;
@@ -644,19 +1206,17 @@ describe("paper-inspired tool merger", () => {
     await expect(merger.merge([raw("unsafe")])).rejects.toThrow(/descriptor/i);
   });
 
-  test.each([
-    { description: "", inputSchema: {} },
-    { description: "valid", inputSchema: null },
-    { description: "valid", inputSchema: {}, tags: ["ok", 1] },
-    { description: "valid", inputSchema: {}, namespace: "" },
-  ])("rejects malformed synthesized descriptors", async (output) => {
-    const merger = new ToolMerger({
-      embedder: embedder([[1, 0]]),
-      classifier: classifier(),
-      synthesizer: { synthesize: async () => output as never },
-    });
-    await expect(merger.merge([raw("a")])).rejects.toThrow(/descriptor/i);
-  });
+  test.each([{}, { description: "" }, { description: "   " }, { description: 1 }])(
+    "rejects malformed synthesized descriptors",
+    async (output) => {
+      const merger = new ToolMerger({
+        embedder: embedder([[1, 0]]),
+        classifier: classifier(),
+        synthesizer: { synthesize: async () => output as never },
+      });
+      await expect(merger.merge([raw("a")])).rejects.toThrow(/descriptor/i);
+    },
+  );
 
   test("rejects input canonical id collisions", async () => {
     const merger = new ToolMerger({
@@ -707,7 +1267,7 @@ describe("paper prompt builders", () => {
     }
   });
 
-  test("does not ask the synthesizer to produce trusted policy metadata", () => {
+  test("asks the synthesizer only for JSON description data", () => {
     const canonical = {
       id: "id",
       name: "search",
@@ -720,6 +1280,8 @@ describe("paper prompt builders", () => {
 
     const prompt = buildDescriptorSynthesisPrompt(canonical, [canonical]);
 
-    expect(prompt.match(/JSON shape:.*$/m)?.[0]).not.toMatch(/tags|namespace/);
+    expect(prompt.match(/JSON shape:.*$/m)?.[0]).toBe(
+      'JSON shape: {"description": string}. Keep text concise.',
+    );
   });
 });

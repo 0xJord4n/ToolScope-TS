@@ -2,6 +2,7 @@ export {
   MergeManifest,
   ToolMerger,
   PAPER_2026_DEFAULTS as PAPER_2026_MERGER_DEFAULTS,
+  PAPER_2026_MERGER_RESOURCE_DEFAULTS,
   type CandidatePair,
   type ClusterValidation,
   type ClusterValidator,

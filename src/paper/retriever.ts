@@ -7,6 +7,12 @@ export const PAPER_2026_RETRIEVER_DEFAULTS = {
   epsilon: 1e-12,
 } as const;
 
+export const PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS = Object.freeze({
+  maxQueryChars: 16_384,
+  maxCatalogSize: 1_000,
+  maxEmbeddingDimensions: 4_096,
+});
+
 export interface QueryDecomposer {
   decompose(query: string): string[] | Promise<string[]>;
 }
@@ -21,6 +27,9 @@ export interface MultiQueryRetrieverOptions extends RetrievalFilters {
   rerankPoolSize?: number;
   epsilon?: number;
   alpha?: number;
+  maxQueryChars?: number;
+  maxCatalogSize?: number;
+  maxEmbeddingDimensions?: number;
 }
 
 export interface MultiQueryRetrieveOptions extends RetrievalFilters {
@@ -28,6 +37,9 @@ export interface MultiQueryRetrieveOptions extends RetrievalFilters {
   rerankPoolSize?: number;
   epsilon?: number;
   alpha?: number;
+  maxQueryChars?: number;
+  maxCatalogSize?: number;
+  maxEmbeddingDimensions?: number;
 }
 
 export interface MultiQueryCandidateTrace {
@@ -125,9 +137,12 @@ export function bm25Scores(
   });
 }
 
-function cosine(left: number[], right: number[]): number {
+function cosine(left: number[], right: number[], maxEmbeddingDimensions: number): number {
   if (left.length === 0 || left.length !== right.length) {
     throw new Error("Embedding dimension mismatch");
+  }
+  if (left.length > maxEmbeddingDimensions) {
+    throw new RangeError("Embedding vector exceeds maxEmbeddingDimensions");
   }
   let dot = 0;
   let leftMagnitude = 0;
@@ -160,7 +175,10 @@ function cosine(left: number[], right: number[]): number {
   return score;
 }
 
-function validateQueryVector(vector: number[]): void {
+function validateQueryVector(vector: number[], maxEmbeddingDimensions: number): void {
+  if (vector.length > maxEmbeddingDimensions) {
+    throw new RangeError("Query embedding vector exceeds maxEmbeddingDimensions");
+  }
   if (vector.length === 0 || vector.some((value) => !Number.isFinite(value))) {
     throw new Error("Embedding vectors must contain only finite numbers");
   }
@@ -173,16 +191,45 @@ function validateQueryVector(vector: number[]): void {
   }
 }
 
+function validateStoredVector(vector: number[], maxEmbeddingDimensions: number): void {
+  if (vector.length > maxEmbeddingDimensions) {
+    throw new RangeError("Stored embedding vector exceeds maxEmbeddingDimensions");
+  }
+  if (vector.length === 0 || vector.some((value) => !Number.isFinite(value))) {
+    throw new Error("Embedding vectors must contain only finite numbers");
+  }
+}
+
+function assertPositiveSafeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${name} must be a positive safe integer`);
+  }
+}
+
+function assertNonNegativeSafeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+}
+
 function validateConfiguration(
   k: number,
   rerankPoolSize: number,
   epsilon: number,
   alpha: number,
+  maxQueryChars: number,
+  maxCatalogSize: number,
+  maxEmbeddingDimensions: number,
 ): void {
-  if (!Number.isInteger(k) || k < 1) throw new RangeError("k must be at least 1");
-  if (!Number.isInteger(rerankPoolSize) || rerankPoolSize < 1) {
-    throw new RangeError("rerankPoolSize must be at least 1");
+  if (!Number.isSafeInteger(k) || k < 1) {
+    throw new RangeError("k must be at least 1 and a safe integer");
   }
+  if (!Number.isSafeInteger(rerankPoolSize) || rerankPoolSize < 1) {
+    throw new RangeError("rerankPoolSize must be at least 1 and a safe integer");
+  }
+  assertPositiveSafeInteger(maxQueryChars, "maxQueryChars");
+  assertNonNegativeSafeInteger(maxCatalogSize, "maxCatalogSize");
+  assertPositiveSafeInteger(maxEmbeddingDimensions, "maxEmbeddingDimensions");
   if (!Number.isFinite(epsilon) || epsilon <= 0) {
     throw new RangeError("epsilon must be greater than zero");
   }
@@ -227,6 +274,10 @@ export class MultiQueryRetriever<T = unknown> {
       options.rerankPoolSize ?? PAPER_2026_RETRIEVER_DEFAULTS.rerankPoolSize,
       options.epsilon ?? PAPER_2026_RETRIEVER_DEFAULTS.epsilon,
       options.alpha ?? PAPER_2026_RETRIEVER_DEFAULTS.alpha,
+      options.maxQueryChars ?? PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS.maxQueryChars,
+      options.maxCatalogSize ?? PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS.maxCatalogSize,
+      options.maxEmbeddingDimensions ??
+        PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS.maxEmbeddingDimensions,
     );
     this.options = options;
   }
@@ -243,9 +294,50 @@ export class MultiQueryRetriever<T = unknown> {
     const epsilon =
       overrides.epsilon ?? this.options.epsilon ?? PAPER_2026_RETRIEVER_DEFAULTS.epsilon;
     const alpha = overrides.alpha ?? this.options.alpha ?? PAPER_2026_RETRIEVER_DEFAULTS.alpha;
-    validateConfiguration(k, rerankPoolSize, epsilon, alpha);
+    const maxQueryChars =
+      overrides.maxQueryChars ??
+      this.options.maxQueryChars ??
+      PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS.maxQueryChars;
+    const maxCatalogSize =
+      overrides.maxCatalogSize ??
+      this.options.maxCatalogSize ??
+      PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS.maxCatalogSize;
+    const maxEmbeddingDimensions =
+      overrides.maxEmbeddingDimensions ??
+      this.options.maxEmbeddingDimensions ??
+      PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS.maxEmbeddingDimensions;
+    validateConfiguration(
+      k,
+      rerankPoolSize,
+      epsilon,
+      alpha,
+      maxQueryChars,
+      maxCatalogSize,
+      maxEmbeddingDimensions,
+    );
 
     const query = messagesToQueryText(messages);
+    if (query.length > maxQueryChars) {
+      throw new RangeError("Query exceeds maxQueryChars");
+    }
+
+    const catalog = this.options.index.backend.list();
+    if (catalog.length > maxCatalogSize) {
+      throw new RangeError("Retrieval catalog exceeds maxCatalogSize");
+    }
+    const seenToolIds = new Set<string>();
+    const duplicateToolIds = new Set<string>();
+    for (const record of catalog) {
+      if (seenToolIds.has(record.tool.id)) duplicateToolIds.add(record.tool.id);
+      seenToolIds.add(record.tool.id);
+      validateStoredVector(record.vector, maxEmbeddingDimensions);
+    }
+    if (duplicateToolIds.size > 0) {
+      throw new Error(
+        `Duplicate tool IDs in retrieval catalog: ${[...duplicateToolIds].sort().join(", ")}`,
+      );
+    }
+
     const decomposition = await this.options.decomposer.decompose(query);
     if (
       !Array.isArray(decomposition) ||
@@ -257,6 +349,9 @@ export class MultiQueryRetriever<T = unknown> {
     if (decomposition.length > k) {
       throw new Error("Query decomposition has more steps than k");
     }
+    if (decomposition.some((step) => step.length > maxQueryChars)) {
+      throw new RangeError("Generated query exceeds maxQueryChars");
+    }
 
     const filters: RetrievalFilters = {
       allowTags: overrides.allowTags ?? this.options.allowTags,
@@ -264,18 +359,6 @@ export class MultiQueryRetriever<T = unknown> {
       namespace: overrides.namespace ?? this.options.namespace,
       policy: overrides.policy ?? this.options.policy,
     };
-    const catalog = this.options.index.backend.list();
-    const seenToolIds = new Set<string>();
-    const duplicateToolIds = new Set<string>();
-    for (const record of catalog) {
-      if (seenToolIds.has(record.tool.id)) duplicateToolIds.add(record.tool.id);
-      seenToolIds.add(record.tool.id);
-    }
-    if (duplicateToolIds.size > 0) {
-      throw new Error(
-        `Duplicate tool IDs in retrieval catalog: ${[...duplicateToolIds].sort().join(", ")}`,
-      );
-    }
     const records = await filterRecords(catalog, filters);
     const steps: MultiQueryStepTrace[] = [];
     const recordById = new Map(records.map((record) => [record.tool.id, record]));
@@ -287,14 +370,14 @@ export class MultiQueryRetriever<T = unknown> {
         throw new Error("Embedder returned the wrong vector count");
       }
       const queryVector = vectors[0];
-      validateQueryVector(queryVector);
+      validateQueryVector(queryVector, maxEmbeddingDimensions);
       const sparseScores = bm25Scores(
         stepQuery,
         records.map((record) => record.text),
       );
       const hybrid = records
         .map((record, index) => {
-          const denseScore = cosine(queryVector, record.vector);
+          const denseScore = cosine(queryVector, record.vector, maxEmbeddingDimensions);
           const bm25Score = sparseScores[index]!;
           return {
             record,

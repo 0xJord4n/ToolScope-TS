@@ -1,4 +1,5 @@
 import { fingerprintTool, stableJson } from "../fingerprint.js";
+import { cloneStrictJsonData } from "../json.js";
 import { normalizeTools } from "../normalize.js";
 import { toolText } from "../text.js";
 import type { CanonicalTool, EmbeddingProvider, JsonSchema, ToolTextConfig } from "../types.js";
@@ -7,6 +8,14 @@ export const PAPER_2026_DEFAULTS = Object.freeze({
   candidateNeighbors: 30,
   candidateThreshold: 0.82,
   autoCorrectionPasses: 1,
+});
+
+export const PAPER_2026_MERGER_RESOURCE_DEFAULTS = Object.freeze({
+  modelConcurrency: 8,
+  maxCatalogSize: 1000,
+  maxEmbeddingDimensions: 4096,
+  maxDescriptorChars: 16384,
+  maxClassifierCalls: 30000,
 });
 
 export interface RelationshipClassification {
@@ -31,7 +40,6 @@ export interface ClusterValidator {
 
 export interface SynthesizedDescriptor {
   description: string;
-  inputSchema: JsonSchema;
 }
 
 export interface DescriptorSynthesizer {
@@ -51,6 +59,11 @@ export interface ToolMergerOptions {
   autoCorrectionPasses?: number;
   allowCrossNamespaceCandidates?: boolean;
   text?: ToolTextConfig;
+  modelConcurrency?: number;
+  maxCatalogSize?: number;
+  maxEmbeddingDimensions?: number;
+  maxDescriptorChars?: number;
+  maxClassifierCalls?: number;
 }
 
 export interface CandidatePair {
@@ -112,19 +125,29 @@ interface IndexedPair {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
-function assertNonNegativeInteger(value: number, name: string): void {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new RangeError(`${name} must be a non-negative integer`);
+function assertSafeInteger(value: number, name: string, minimum: number): void {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    const qualification = minimum === 0 ? "a non-negative" : "a positive";
+    throw new RangeError(`${name} must be ${qualification} safe integer`);
   }
 }
 
-function validateEmbeddings(vectors: number[][], expectedCount: number): void {
+function validateEmbeddings(
+  vectors: number[][],
+  expectedCount: number,
+  maxEmbeddingDimensions: number,
+): void {
   if (!Array.isArray(vectors) || vectors.length !== expectedCount) {
     throw new TypeError("Invalid embedding output: vector count does not match tool count");
   }
   if (expectedCount === 0) return;
   const dimension = vectors[0]?.length ?? 0;
   if (dimension === 0) throw new TypeError("Invalid embedding output: vectors must not be empty");
+  if (dimension > maxEmbeddingDimensions) {
+    throw new RangeError(
+      `Invalid embedding output: vector dimensions exceed maxEmbeddingDimensions (${maxEmbeddingDimensions})`,
+    );
+  }
   for (const vector of vectors) {
     if (!Array.isArray(vector) || vector.length !== dimension) {
       throw new TypeError("Invalid embedding output: vector dimensions must match");
@@ -155,6 +178,10 @@ function cosine(left: readonly number[], right: readonly number[]): number {
   return Math.max(-1, Math.min(1, score));
 }
 
+function compareNeighbors(a: IndexedPair, b: IndexedPair): number {
+  return b.similarity - a.similarity || a.left - b.left || a.right - b.right;
+}
+
 function candidatePairs<T>(
   tools: readonly CanonicalTool<T>[],
   vectors: readonly number[][],
@@ -162,6 +189,7 @@ function candidatePairs<T>(
   threshold: number,
   allowCrossNamespaceCandidates: boolean,
 ): IndexedPair[] {
+  if (count === 0) return [];
   const deduplicated = new Map<string, IndexedPair>();
   for (let target = 0; target < tools.length; target += 1) {
     const targetTool = tools[target]!;
@@ -173,20 +201,113 @@ function candidatePairs<T>(
         continue;
       const similarity = cosine(vectors[target]!, vectors[candidate]!);
       if (similarity < threshold) continue;
-      neighbors.push({
+      const pair = {
         left: Math.min(target, candidate),
         right: Math.max(target, candidate),
         similarity,
-      });
+      };
+      let insertion = neighbors.length;
+      while (insertion > 0 && compareNeighbors(pair, neighbors[insertion - 1]!) < 0) {
+        insertion -= 1;
+      }
+      if (insertion < count) {
+        neighbors.splice(insertion, 0, pair);
+        if (neighbors.length > count) neighbors.pop();
+      }
     }
-    neighbors.sort((a, b) => b.similarity - a.similarity || a.left - b.left || a.right - b.right);
-    for (const pair of neighbors.slice(0, count)) {
+    for (const pair of neighbors) {
       const key = `${pair.left}:${pair.right}`;
       const previous = deduplicated.get(key);
       if (!previous || pair.similarity > previous.similarity) deduplicated.set(key, pair);
     }
   }
   return [...deduplicated.values()].sort((a, b) => a.left - b.left || a.right - b.right);
+}
+
+type OrderedOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+async function mapConcurrentOrdered<T, U>(
+  values: readonly T[],
+  concurrency: number,
+  map: (value: T, index: number) => Promise<U> | U,
+): Promise<U[]> {
+  if (values.length === 0) return [];
+  const outcomes = Array.from<OrderedOutcome<U> | undefined>({ length: values.length });
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      try {
+        outcomes[index] = { ok: true, value: await map(values[index]!, index) };
+      } catch (error) {
+        outcomes[index] = { ok: false, error };
+      }
+    }
+  });
+  await Promise.all(workers);
+  const results: U[] = [];
+  for (const outcome of outcomes) {
+    if (!outcome) throw new Error("Ordered concurrency task did not complete");
+    if (!outcome.ok) throw outcome.error;
+    results.push(outcome.value);
+  }
+  return results;
+}
+
+function assertCanonicalDescriptorSize<T>(
+  tool: CanonicalTool<T>,
+  maxDescriptorChars: number,
+): void {
+  const payload = stableJson({
+    id: tool.id,
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    tags: tool.tags,
+    ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }),
+  });
+  if (payload.length > maxDescriptorChars) {
+    throw new RangeError(
+      `Canonical tool descriptor exceeds maxDescriptorChars (${maxDescriptorChars}): ${tool.name}`,
+    );
+  }
+}
+
+function embeddingText<T>(
+  tool: CanonicalTool<T>,
+  config: ToolTextConfig,
+  maxDescriptorChars: number,
+): string {
+  const base = toolText(tool, {
+    ...config,
+    preprocessors: [],
+    truncate: null as unknown as number,
+  });
+  if (base.length > maxDescriptorChars) {
+    throw new RangeError(
+      `Tool descriptor exceeds maxDescriptorChars (${maxDescriptorChars}): ${tool.name}`,
+    );
+  }
+  const preprocessors = (config.preprocessors ?? []).map((preprocessor) => (text: string) => {
+    const output = preprocessor(text);
+    if (typeof output !== "string") {
+      throw new TypeError("Tool text preprocessor must return a string");
+    }
+    if (output.length > maxDescriptorChars) {
+      throw new RangeError(
+        `Preprocessed tool text exceeds maxDescriptorChars (${maxDescriptorChars}): ${tool.name}`,
+      );
+    }
+    return output;
+  });
+  const text = toolText(tool, { ...config, preprocessors });
+  if (text.length > maxDescriptorChars) {
+    throw new RangeError(
+      `Embedding text exceeds maxDescriptorChars (${maxDescriptorChars}): ${tool.name}`,
+    );
+  }
+  return text;
 }
 
 function connectedComponents<T>(tools: readonly CanonicalTool<T>[], edges: readonly IndexedPair[]) {
@@ -263,29 +384,19 @@ function representative<T>(cluster: readonly CanonicalTool<T>[]): CanonicalTool<
   )[0]!;
 }
 
-function assertJsonSafe(value: unknown, context: string, seen = new Set<object>()): void {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean" ||
-    (typeof value === "number" && Number.isFinite(value))
-  ) {
-    return;
-  }
-  if (typeof value !== "object") {
-    throw new TypeError(`Invalid ${context}: values must be finite JSON data`);
-  }
-  if (seen.has(value)) throw new TypeError(`Invalid ${context}: cyclic data is forbidden`);
-  seen.add(value);
-  if (Array.isArray(value)) {
-    for (const item of value) assertJsonSafe(item, context, seen);
-  } else {
-    for (const item of Object.values(value)) assertJsonSafe(item, context, seen);
-  }
-  seen.delete(value);
+function defineEnumerable(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
 }
 
-function validateObjectSchema(schema: unknown, context: string): asserts schema is JsonSchema {
+function validateClonedObjectSchema(
+  schema: unknown,
+  context: string,
+): asserts schema is JsonSchema {
   if (!isRecord(schema) || (schema.type !== undefined && schema.type !== "object")) {
     throw new TypeError(`Invalid ${context}: only object JSON Schemas are supported`);
   }
@@ -298,15 +409,28 @@ function validateObjectSchema(schema: unknown, context: string): asserts schema 
   ) {
     throw new TypeError(`Invalid ${context}: required must contain only strings`);
   }
-  assertJsonSafe(schema, context);
+}
+
+function cloneObjectSchema(schema: unknown, context: string): JsonSchema {
+  const clone = cloneStrictJsonData(schema, context);
+  validateClonedObjectSchema(clone, context);
+  return clone;
 }
 
 function consolidateSchemas<T>(cluster: readonly CanonicalTool<T>[]): JsonSchema {
+  const schemas = cluster.map((tool) =>
+    cloneObjectSchema(tool.inputSchema, "member descriptor schema"),
+  );
+  if (schemas.length === 1) return schemas[0]!;
+
   const definitions = new Map<string, Map<string, unknown>>();
   const requiredSets: Set<string>[] = [];
-  for (const tool of cluster) {
-    validateObjectSchema(tool.inputSchema, "member descriptor schema");
-    const properties = (tool.inputSchema.properties ?? {}) as Record<string, unknown>;
+  const hoisted = new Map<"$defs" | "definitions", Map<string, [string, unknown]>>([
+    ["$defs", new Map()],
+    ["definitions", new Map()],
+  ]);
+  for (const schema of schemas) {
+    const properties = (schema.properties ?? {}) as Record<string, unknown>;
     for (const [name, definition] of Object.entries(properties)) {
       const serialized = stableJson(definition);
       let variants = definitions.get(name);
@@ -316,7 +440,22 @@ function consolidateSchemas<T>(cluster: readonly CanonicalTool<T>[]): JsonSchema
       }
       variants.set(serialized, definition);
     }
-    requiredSets.push(new Set((tool.inputSchema.required as string[] | undefined) ?? []));
+    requiredSets.push(new Set((schema.required as string[] | undefined) ?? []));
+    for (const keyword of ["$defs", "definitions"] as const) {
+      const source = schema[keyword];
+      if (source === undefined) continue;
+      if (!isRecord(source)) {
+        throw new TypeError(`Invalid member descriptor schema: ${keyword} must be an object`);
+      }
+      for (const [name, definition] of Object.entries(source)) {
+        const serialized = stableJson(definition);
+        const previous = hoisted.get(keyword)!.get(name);
+        if (previous && previous[0] !== serialized) {
+          throw new TypeError(`Conflicting ${keyword} definition: ${name}`);
+        }
+        hoisted.get(keyword)!.set(name, [serialized, definition]);
+      }
+    }
   }
 
   const properties: Record<string, unknown> = {};
@@ -324,36 +463,44 @@ function consolidateSchemas<T>(cluster: readonly CanonicalTool<T>[]): JsonSchema
     const variants = [...definitions.get(name)!.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([, definition]) => definition);
-    Object.defineProperty(properties, name, {
-      value: variants.length === 1 ? variants[0] : { anyOf: variants },
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
+    defineEnumerable(properties, name, variants.length === 1 ? variants[0] : { anyOf: variants });
   }
   const required = [...definitions.keys()]
     .filter((name) => requiredSets.every((set) => set.has(name)))
     .sort((a, b) => a.localeCompare(b));
-  return { type: "object", properties, required };
+  const consolidated: JsonSchema = { type: "object", properties, required };
+  for (const keyword of ["$defs", "definitions"] as const) {
+    const entries = hoisted.get(keyword)!;
+    if (entries.size === 0) continue;
+    const target: Record<string, unknown> = {};
+    for (const name of [...entries.keys()].sort((a, b) => a.localeCompare(b))) {
+      defineEnumerable(target, name, entries.get(name)![1]);
+    }
+    consolidated[keyword] = target;
+  }
+  consolidated.anyOf = [...new Map(schemas.map((schema) => [stableJson(schema), schema])).entries()]
+    .sort(
+      ([leftSerialized, left], [rightSerialized, right]) =>
+        stableJson(left.properties ?? {}).localeCompare(stableJson(right.properties ?? {})) ||
+        leftSerialized.localeCompare(rightSerialized),
+    )
+    .map(([, schema]) => schema);
+  return consolidated;
 }
 
 function validateSynthesizedDescriptor(output: unknown): SynthesizedDescriptor {
-  if (!isRecord(output)) throw new TypeError("Invalid synthesized descriptor: expected an object");
-  const supportedDescriptorKeys = new Set(["description", "inputSchema"]);
-  for (const key of Object.keys(output)) {
+  const clone = cloneStrictJsonData(output, "synthesized descriptor");
+  if (!isRecord(clone)) throw new TypeError("Invalid synthesized descriptor: expected an object");
+  const supportedDescriptorKeys = new Set(["description"]);
+  for (const key of Object.keys(clone)) {
     if (!supportedDescriptorKeys.has(key)) {
       throw new TypeError(`Invalid synthesized descriptor: unsupported field ${key}`);
     }
   }
-  if (typeof output.description !== "string" || output.description.trim().length === 0) {
+  if (typeof clone.description !== "string" || clone.description.trim().length === 0) {
     throw new TypeError("Invalid synthesized descriptor: description must be non-empty");
   }
-  validateObjectSchema(output.inputSchema, "synthesized descriptor schema");
-  assertJsonSafe(output, "synthesized descriptor");
-  return {
-    description: output.description,
-    inputSchema: output.inputSchema,
-  };
+  return { description: clone.description };
 }
 
 function assertFinalIntegrity<T>(
@@ -384,6 +531,11 @@ export class ToolMerger {
       | "autoCorrectionPasses"
       | "allowCrossNamespaceCandidates"
       | "text"
+      | "modelConcurrency"
+      | "maxCatalogSize"
+      | "maxEmbeddingDimensions"
+      | "maxDescriptorChars"
+      | "maxClassifierCalls"
     >
   > &
     Omit<
@@ -393,6 +545,11 @@ export class ToolMerger {
       | "autoCorrectionPasses"
       | "allowCrossNamespaceCandidates"
       | "text"
+      | "modelConcurrency"
+      | "maxCatalogSize"
+      | "maxEmbeddingDimensions"
+      | "maxDescriptorChars"
+      | "maxClassifierCalls"
     >;
 
   constructor(options: ToolMergerOptions) {
@@ -401,8 +558,26 @@ export class ToolMerger {
       options.similarityThreshold ?? PAPER_2026_DEFAULTS.candidateThreshold;
     const autoCorrectionPasses =
       options.autoCorrectionPasses ?? PAPER_2026_DEFAULTS.autoCorrectionPasses;
-    assertNonNegativeInteger(candidateCount, "candidateCount");
-    assertNonNegativeInteger(autoCorrectionPasses, "autoCorrectionPasses");
+    const modelConcurrency =
+      options.modelConcurrency ?? PAPER_2026_MERGER_RESOURCE_DEFAULTS.modelConcurrency;
+    const maxCatalogSize =
+      options.maxCatalogSize ?? PAPER_2026_MERGER_RESOURCE_DEFAULTS.maxCatalogSize;
+    const maxEmbeddingDimensions =
+      options.maxEmbeddingDimensions ?? PAPER_2026_MERGER_RESOURCE_DEFAULTS.maxEmbeddingDimensions;
+    const maxDescriptorChars =
+      options.maxDescriptorChars ?? PAPER_2026_MERGER_RESOURCE_DEFAULTS.maxDescriptorChars;
+    const maxClassifierCalls =
+      options.maxClassifierCalls ?? PAPER_2026_MERGER_RESOURCE_DEFAULTS.maxClassifierCalls;
+    assertSafeInteger(candidateCount, "candidateCount", 0);
+    assertSafeInteger(autoCorrectionPasses, "autoCorrectionPasses", 0);
+    assertSafeInteger(modelConcurrency, "modelConcurrency", 1);
+    assertSafeInteger(maxCatalogSize, "maxCatalogSize", 1);
+    assertSafeInteger(maxEmbeddingDimensions, "maxEmbeddingDimensions", 1);
+    assertSafeInteger(maxDescriptorChars, "maxDescriptorChars", 0);
+    assertSafeInteger(maxClassifierCalls, "maxClassifierCalls", 0);
+    if (options.text?.truncate !== undefined) {
+      assertSafeInteger(options.text.truncate, "text.truncate", 0);
+    }
     if (
       !Number.isFinite(similarityThreshold) ||
       similarityThreshold < -1 ||
@@ -417,15 +592,26 @@ export class ToolMerger {
       autoCorrectionPasses,
       allowCrossNamespaceCandidates: options.allowCrossNamespaceCandidates ?? false,
       text: options.text ?? {},
+      modelConcurrency,
+      maxCatalogSize,
+      maxEmbeddingDimensions,
+      maxDescriptorChars,
+      maxClassifierCalls,
     };
   }
 
   async merge<T>(tools: readonly T[]): Promise<MergeResult<T>> {
+    if (tools.length > this.#options.maxCatalogSize) {
+      throw new RangeError(`Tool catalog exceeds maxCatalogSize (${this.#options.maxCatalogSize})`);
+    }
     const originals = normalizeTools(tools);
     const ids = new Set<string>();
     for (const tool of originals) {
       if (ids.has(tool.id)) throw new Error(`Canonical tool id collision: ${tool.id}`);
       ids.add(tool.id);
+    }
+    for (const tool of originals) {
+      assertCanonicalDescriptorSize(tool, this.#options.maxDescriptorChars);
     }
     if (originals.length === 0) {
       return {
@@ -437,10 +623,11 @@ export class ToolMerger {
       };
     }
 
-    const vectors = await this.#options.embedder.embed(
-      originals.map((tool) => toolText(tool, this.#options.text)),
+    const texts = originals.map((tool) =>
+      embeddingText(tool, this.#options.text, this.#options.maxDescriptorChars),
     );
-    validateEmbeddings(vectors, originals.length);
+    const vectors = await this.#options.embedder.embed(texts);
+    validateEmbeddings(vectors, originals.length, this.#options.maxEmbeddingDimensions);
     const candidates = candidatePairs(
       originals,
       vectors,
@@ -448,55 +635,78 @@ export class ToolMerger {
       this.#options.similarityThreshold,
       this.#options.allowCrossNamespaceCandidates,
     );
-    const edges: IndexedPair[] = [];
-    for (const pair of candidates) {
-      const output: unknown = await this.#options.classifier.classify(
-        originals[pair.left]!,
-        originals[pair.right]!,
+    if (candidates.length > this.#options.maxClassifierCalls) {
+      throw new RangeError(
+        `Candidate pairs exceed maxClassifierCalls (${this.#options.maxClassifierCalls})`,
       );
-      if (
-        !isRecord(output) ||
-        typeof output.similar !== "boolean" ||
-        (output.reason !== undefined && typeof output.reason !== "string")
-      ) {
-        throw new TypeError(
-          "Invalid classifier output: expected { similar: boolean, reason?: string }",
-        );
-      }
-      if (output.similar) edges.push(pair);
     }
+    const classifications = await mapConcurrentOrdered(
+      candidates,
+      this.#options.modelConcurrency,
+      async (pair) => {
+        const output: unknown = await this.#options.classifier.classify(
+          originals[pair.left]!,
+          originals[pair.right]!,
+        );
+        if (
+          !isRecord(output) ||
+          typeof output.similar !== "boolean" ||
+          (output.reason !== undefined && typeof output.reason !== "string")
+        ) {
+          throw new TypeError(
+            "Invalid classifier output: expected { similar: boolean, reason?: string }",
+          );
+        }
+        return output.similar;
+      },
+    );
+    const edges = candidates.filter((_pair, index) => classifications[index]);
 
     let components = connectedComponents(originals, edges);
     if (this.#options.validator) {
       for (let pass = 0; pass < this.#options.autoCorrectionPasses; pass += 1) {
-        const corrected: CanonicalTool<T>[][] = [];
-        for (const cluster of components) {
-          if (cluster.length === 1) {
-            corrected.push(cluster);
-            continue;
-          }
-          const output: unknown = await this.#options.validator.validate(cluster);
-          corrected.push(...(validateCorrection(cluster, output) ?? [cluster]));
-        }
-        components = corrected;
+        const corrections = await mapConcurrentOrdered(
+          components,
+          this.#options.modelConcurrency,
+          async (cluster) => {
+            if (cluster.length === 1) return [cluster];
+            const output: unknown = await this.#options.validator!.validate(cluster);
+            return validateCorrection(cluster, output) ?? [cluster];
+          },
+        );
+        components = corrections.flat();
       }
     }
     assertFinalIntegrity(originals, components);
 
+    const prepared = components.map((cluster) => ({
+      cluster,
+      selected: representative(cluster),
+      consolidatedSchema: consolidateSchemas(cluster),
+    }));
+    const synthesized = await mapConcurrentOrdered(
+      prepared,
+      this.#options.modelConcurrency,
+      async ({ cluster, selected }) => {
+        const descriptor = this.#options.synthesizer
+          ? validateSynthesizedDescriptor(
+              await this.#options.synthesizer.synthesize(selected, cluster),
+            )
+          : { description: selected.description };
+        if (descriptor.description.length > this.#options.maxDescriptorChars) {
+          throw new RangeError(
+            `Synthesized descriptor exceeds maxDescriptorChars (${this.#options.maxDescriptorChars})`,
+          );
+        }
+        return descriptor;
+      },
+    );
     const merged: MergedToolDescriptor[] = [];
     const manifestEntries: MergeManifestEntry<T>[] = [];
     const mergedIds = new Set<string>();
-    for (const cluster of components) {
-      const selected = representative(cluster);
-      const consolidatedSchema = consolidateSchemas(cluster);
-      const synthesized = this.#options.synthesizer
-        ? validateSynthesizedDescriptor(
-            await this.#options.synthesizer.synthesize(selected, cluster),
-          )
-        : {
-            description: selected.description,
-            inputSchema: consolidatedSchema,
-          };
+    for (let index = 0; index < prepared.length; index += 1) {
+      const { cluster, selected, consolidatedSchema } = prepared[index]!;
+      const descriptor = synthesized[index]!;
       const tags = [...new Set(cluster.flatMap((tool) => tool.tags))].sort((a, b) =>
         a.localeCompare(b),
       );
@@ -505,7 +715,7 @@ export class ToolMerger {
         : undefined;
       const id = fingerprintTool(
         selected.name,
-        synthesized.description,
+        descriptor.description,
         consolidatedSchema,
         namespace,
       );
@@ -514,7 +724,7 @@ export class ToolMerger {
       merged.push({
         id,
         name: selected.name,
-        description: synthesized.description,
+        description: descriptor.description,
         inputSchema: consolidatedSchema,
         tags: [...tags],
         ...(namespace === undefined ? {} : { namespace }),

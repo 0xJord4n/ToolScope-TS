@@ -3,6 +3,10 @@ import { tool as langchainTool } from "@langchain/core/tools";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { tool as aiTool } from "ai";
+import { cp, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { HashEmbeddingProvider, normalizeTool } from "../src";
 import {
@@ -38,6 +42,31 @@ describe("real framework packages", () => {
       type: "object",
       properties: { city: { type: "string" } },
     });
+  });
+
+  test("normalizes a genuine schema from a second physical Zod installation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "toolscope-zod-copy-"));
+    const copiedZod = join(root, "zod");
+    try {
+      await cp(new URL("../node_modules/zod", import.meta.url), copiedZod, { recursive: true });
+      const secondZod = (await import(
+        pathToFileURL(join(copiedZod, "index.js")).href
+      )) as typeof import("zod");
+      expect(secondZod.z.ZodObject).not.toBe(z.ZodObject);
+
+      expect(
+        normalizeTool({
+          name: "cross-install-zod",
+          inputSchema: secondZod.z.object({ query: secondZod.z.string() }),
+        }).inputSchema,
+      ).toMatchObject({
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("selects real LangChain tools and runs as a LangGraph node", async () => {

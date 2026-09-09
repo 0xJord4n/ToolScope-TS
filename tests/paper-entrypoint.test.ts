@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   MultiQueryRetriever,
   PAPER_2026_DEFAULTS,
+  PAPER_2026_MERGER_RESOURCE_DEFAULTS,
+  PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS,
   ToolMerger,
   buildClusterCorrectionPrompt,
   buildDescriptorSynthesisPrompt,
@@ -21,6 +23,16 @@ describe("paper pipeline public entrypoint", () => {
       rerankPoolSize: 50,
       epsilon: 1e-12,
     });
+    expect(Object.keys(PAPER_2026_DEFAULTS).sort()).toEqual([
+      "alpha",
+      "autoCorrectionPasses",
+      "candidateNeighbors",
+      "candidateThreshold",
+      "epsilon",
+      "rerankPoolSize",
+    ]);
+    expect(PAPER_2026_MERGER_RESOURCE_DEFAULTS.modelConcurrency).toBe(8);
+    expect(PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS.maxQueryChars).toBe(16384);
     expect(buildRelationshipPrompt).toBeFunction();
     expect(buildClusterCorrectionPrompt).toBeFunction();
     expect(buildDescriptorSynthesisPrompt).toBeFunction();

@@ -4,6 +4,7 @@ import type { CanonicalTool, IndexedTool, Reranker, VectorBackend } from "../src
 import {
   bm25Scores,
   MultiQueryRetriever,
+  PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS,
   type MultiQueryCandidateTrace,
   type QueryDecomposer,
 } from "../src/paper/retriever";
@@ -105,6 +106,149 @@ function vectorFixture(
 }
 
 describe("paper-style multi-query retrieval", () => {
+  test("exports immutable retriever resource defaults", () => {
+    expect(PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS).toEqual({
+      maxQueryChars: 16384,
+      maxCatalogSize: 1000,
+      maxEmbeddingDimensions: 4096,
+    });
+    expect(Object.isFrozen(PAPER_2026_RETRIEVER_RESOURCE_DEFAULTS)).toBe(true);
+  });
+
+  test.each([
+    ["k", Number.MAX_SAFE_INTEGER + 1],
+    ["rerankPoolSize", 1.5],
+    ["maxQueryChars", 0],
+    ["maxCatalogSize", Number.MAX_SAFE_INTEGER + 1],
+    ["maxEmbeddingDimensions", -1],
+  ] as const)("rejects unsafe constructor integer %s=%s", (name, value) => {
+    const index = new ToolIndex({ embedder: constantEmbedder });
+    expect(
+      () =>
+        new MultiQueryRetriever({
+          index,
+          decomposer: { decompose: () => ["step"] },
+          reranker: { rerank: async () => [] },
+          k: 1,
+          [name]: value,
+        }),
+    ).toThrow(name);
+  });
+
+  test.each([
+    ["k", Number.MAX_SAFE_INTEGER + 1],
+    ["rerankPoolSize", 1.5],
+    ["maxQueryChars", 0],
+    ["maxCatalogSize", Number.MAX_SAFE_INTEGER + 1],
+    ["maxEmbeddingDimensions", -1],
+  ] as const)(
+    "rejects unsafe retrieval override %s=%s before downstream calls",
+    async (name, value) => {
+      let decomposerCalls = 0;
+      const index = new ToolIndex({ embedder: constantEmbedder });
+      const retriever = new MultiQueryRetriever({
+        index,
+        decomposer: { decompose: () => (++decomposerCalls, ["step"]) },
+        reranker: { rerank: async () => [] },
+        k: 1,
+      });
+      await expect(retriever.retrieve("query", { [name]: value })).rejects.toThrow(name);
+      expect(decomposerCalls).toBe(0);
+    },
+  );
+
+  test("rejects an oversized original query before decomposition", async () => {
+    let decomposerCalls = 0;
+    const index = new ToolIndex({ embedder: constantEmbedder });
+    const retriever = new MultiQueryRetriever({
+      index,
+      decomposer: { decompose: () => (++decomposerCalls, ["step"]) },
+      reranker: { rerank: async () => [] },
+      k: 1,
+      maxQueryChars: 10,
+    });
+    await expect(retriever.retrieve("12345", { maxQueryChars: 4 })).rejects.toThrow(
+      "maxQueryChars",
+    );
+    expect(decomposerCalls).toBe(0);
+  });
+
+  test("rejects an oversized generated query before embedding calls", async () => {
+    let listCalls = 0;
+    let embedCalls = 0;
+    const backend: VectorBackend = {
+      size: 0,
+      upsert() {},
+      remove() {},
+      clear() {},
+      list: () => (++listCalls, []),
+    };
+    const index = new ToolIndex({
+      backend,
+      embedder: { embed: async () => (++embedCalls, [[1]]) },
+    });
+    const retriever = new MultiQueryRetriever({
+      index,
+      decomposer: { decompose: () => ["12345"] },
+      reranker: { rerank: async () => [] },
+      k: 1,
+      maxQueryChars: 4,
+    });
+    await expect(retriever.retrieve("1234")).rejects.toThrow("maxQueryChars");
+    expect(listCalls).toBe(1);
+    expect(embedCalls).toBe(0);
+  });
+
+  test("rejects an oversized catalog before policy, embedding, or reranking", async () => {
+    const originals = [tool("a"), tool("b")];
+    let embedCalls = 0;
+    const index = new ToolIndex({
+      embedder: {
+        async embed(texts) {
+          embedCalls += 1;
+          return texts.map(() => [1]);
+        },
+      },
+    });
+    await index.add(originals);
+    embedCalls = 0;
+    let policyCalls = 0;
+    let decomposerCalls = 0;
+    const retriever = new MultiQueryRetriever({
+      index,
+      decomposer: { decompose: () => (++decomposerCalls, ["step"]) },
+      reranker: {
+        rerank: async () => {
+          throw new Error("called");
+        },
+      },
+      policy: () => (++policyCalls, true),
+      k: 1,
+      maxCatalogSize: 10,
+    });
+    await expect(retriever.retrieve("query", { maxCatalogSize: 1 })).rejects.toThrow(
+      "maxCatalogSize",
+    );
+    expect(policyCalls).toBe(0);
+    expect(embedCalls).toBe(0);
+    expect(decomposerCalls).toBe(0);
+  });
+
+  test("rejects excessive query vector dimensions before reranking", async () => {
+    let rerankCalls = 0;
+    const retriever = vectorFixture([1, 0]);
+    const constrained = new MultiQueryRetriever({
+      index: (retriever as unknown as { options: { index: ToolIndex } }).options.index,
+      decomposer: { decompose: () => ["step"] },
+      reranker: { rerank: async () => (++rerankCalls, []) },
+      k: 1,
+      maxEmbeddingDimensions: 10,
+    });
+    await expect(constrained.retrieve("query", { maxEmbeddingDimensions: 1 })).rejects.toThrow(
+      "maxEmbeddingDimensions",
+    );
+    expect(rerankCalls).toBe(0);
+  });
   test("decomposes the original query and retrieves steps in order", async () => {
     const originals = [tool("alpha"), tool("beta")];
     const decomposed: string[] = [];
@@ -239,9 +383,10 @@ describe("paper-style multi-query retrieval", () => {
     const index = new ToolIndex({ backend, embedder: constantEmbedder });
     const policyCalls: string[] = [];
     const rerankCalls: string[][] = [];
+    let decomposerCalls = 0;
     const retriever = new MultiQueryRetriever<TestTool>({
       index,
-      decomposer: { decompose: () => ["step"] },
+      decomposer: { decompose: () => (++decomposerCalls, ["step"]) },
       reranker: {
         async rerank(_query, candidates) {
           rerankCalls.push(candidates.map((candidate) => candidate.name));
@@ -263,6 +408,7 @@ describe("paper-style multi-query retrieval", () => {
     }).toThrow("Duplicate tool IDs in retrieval catalog: shared-id");
     expect(policyCalls).toEqual([]);
     expect(rerankCalls).toEqual([]);
+    expect(decomposerCalls).toBe(0);
   });
 
   test("breaks equal-score ties by step order, rank, then tool id", async () => {
@@ -548,9 +694,10 @@ describe("paper-style multi-query retrieval", () => {
       list: () => records,
     };
     const index = new ToolIndex({ backend, embedder: constantEmbedder });
+    let decomposerCalls = 0;
     const retriever = new MultiQueryRetriever({
       index,
-      decomposer: { decompose: () => ["step"] },
+      decomposer: { decompose: () => (++decomposerCalls, ["step"]) },
       reranker: { rerank: async () => [1] },
       k: 1,
     });
@@ -558,6 +705,44 @@ describe("paper-style multi-query retrieval", () => {
     await expect(retriever.retrieve("request")).rejects.toThrow(
       "Embedding vectors must contain only finite numbers",
     );
+    expect(decomposerCalls).toBe(0);
+  });
+
+  test("rejects oversized stored vectors before decomposition", async () => {
+    const original = tool("oversized");
+    const records: IndexedTool[] = [
+      {
+        tool: {
+          id: "oversized-id",
+          name: original.name,
+          description: original.description,
+          inputSchema: {},
+          tags: [],
+          original,
+        },
+        vector: [1, 0],
+        text: original.description,
+      },
+    ];
+    const backend: VectorBackend = {
+      size: 1,
+      upsert() {},
+      remove() {},
+      clear() {},
+      list: () => records,
+    };
+    let decomposerCalls = 0;
+    const index = new ToolIndex({ backend, embedder: constantEmbedder });
+    const retriever = new MultiQueryRetriever({
+      index,
+      decomposer: { decompose: () => (++decomposerCalls, ["step"]) },
+      reranker: { rerank: async () => [1] },
+      k: 1,
+      maxEmbeddingDimensions: 1,
+    });
+
+    await expect(retriever.retrieve("request")).rejects.toThrow("maxEmbeddingDimensions");
+    expect(decomposerCalls).toBe(0);
   });
 
   test("rejects a zero-norm stored vector", async () => {
